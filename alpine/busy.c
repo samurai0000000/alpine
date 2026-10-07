@@ -27,6 +27,7 @@
 #include "../pith/busy.h"
 #include "../pith/debug.h"
 #include "../pith/help.h"
+#include "../pith/mcp/mcp.h"
 
 #include "../pith/charconv/utf8.h"
 
@@ -157,6 +158,12 @@ busy_cue(char *msg, percent_done_t pc_f, int delay)
 
     if(!(ps_global && ps_global->ttyo)){
 	dprint((9, "busy_cue returns No (ttyo)"));
+	return(0);
+    }
+
+    /* an MCP tool is running: nothing may be painted on the human's screen */
+    if(mcp_noninteractive()){
+	dprint((9, "busy_cue returns No (mcp)"));
 	return(0);
     }
 

@@ -47,6 +47,7 @@
 #include "../pith/util.h"
 #include "../pith/list.h"
 #include "../pith/margin.h"
+#include "../pith/mcp/mcp.h"
 #ifdef SMIME
 #include "../pith/smime.h"
 #endif /* SMIME */
@@ -1145,6 +1146,103 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
     ps_global->no_newmail_check_from_optionally_enter = 0;
 }
 
+/*
+ * MCP (plan section 2.8): may an MCP tool use the XOAUTH2 login for this
+ * connection without asking anyone?  What the human can do from the TUI
+ * with the credentials the session already holds, an MCP tool can do,
+ * for IMAP and SMTP alike.  Only when all of these hold:
+ *   - the method is XOAUTH2 and this is the first try (trial 0), so a
+ *     refused token is never forgotten on the human's behalf,
+ *   - the account name is in the connection spec, so nothing has to be
+ *     typed, and
+ *   - a refresh token for it is already in the cache or the password
+ *     file, found the same way mm_login_oauth2 finds it.
+ * The caller then lets mm_login_oauth2 load that token as it does for the
+ * human.  With no refresh token the answer is no and the tool reports
+ * -32008; no browser, device code or question is ever started.  The
+ * token itself never leaves Alpine.
+ */
+int
+mcp_oauth2_cached(NETMBX *mb, char *method, long int trial)
+{
+    STRLIST_S  hostlist[2], hostlist2[OAUTH2_TOT_EQUIV+1];
+    OAUTH2_S  *oa2list;
+    char      *token = NULL;
+    int	       i = 0, j, registered = 0, found = 0;
+
+    if(mb == NULL || method == NULL || trial != 0L
+       || strucmp(method, OA2NAME) != 0
+       || mb->user[0] == '\0')
+      return(0);
+
+    hostlist[0].name = mb->host;
+    if(mb->orighost && mb->orighost[0] && strucmp(mb->host, mb->orighost)){
+	hostlist[0].next = &hostlist[1];
+	hostlist[1].name = mb->orighost;
+	hostlist[1].next = NULL;
+    }
+    else
+      hostlist[0].next = NULL;
+
+    /* servers that share credentials, as in mm_login_oauth2 */
+    for(oa2list = alpine_oauth2_list;
+	oa2list && oa2list->host != NULL && oa2list->host[0] != NULL;
+	oa2list++){
+	for(i = 0; i < OAUTH2_TOT_EQUIV
+		   && oa2list->host[i] != NULL
+		   && strucmp(oa2list->host[i], mb->orighost) != 0; i++)
+	  ;
+
+	if(i < OAUTH2_TOT_EQUIV && oa2list->host[i] != NULL){
+	    registered++;
+	    break;
+	}
+    }
+
+    if(registered){
+	hostlist2[i = 0].name = mb->host;
+	if(mb->orighost && mb->orighost[0] && strucmp(mb->host, mb->orighost))
+	  hostlist2[++i].name = mb->orighost;
+
+	for(j = 0; j < OAUTH2_TOT_EQUIV && oa2list->host[j] != NULL; j++){
+	    int k;
+
+	    for(k = 0; k <= i && hostlist2[k].name
+		       && strcmp(hostlist2[k].name, oa2list->host[j]); k++)
+	      ;
+
+	    if(k == i + 1)
+	      hostlist2[++i].name = oa2list->host[j];
+	}
+
+	hostlist2[i+1].name = NULL;
+	hostlist2[i+1].next = NULL;
+	for(j = i; j >= 0; j--)
+	  hostlist2[j].next = &hostlist2[j+1];
+    }
+
+    if(imap_get_passwd_auth(mm_login_list, &token, mb->user,
+			    registered ? hostlist2 : hostlist,
+			    (mb->sslflag || mb->tlsflag), OA2NAME))
+      found = 1;
+#ifdef	LOCAL_PASSWD_CACHE
+    else if(get_passfile_passwd_auth(ps_global->pinerc, &token, mb->user,
+				     registered ? hostlist2 : hostlist,
+				     (mb->sslflag || mb->tlsflag), OA2NAME))
+      found = 1;
+#endif	/* LOCAL_PASSWD_CACHE */
+
+    /* the token text starts with the refresh token, up to PWDAUTHSEP */
+    if(found && (token == NULL || *token == '\0' || *token == PWDAUTHSEP))
+      found = 0;
+
+    if(token)
+      fs_give((void **) &token);
+
+    return(found);
+}
+
+
 IDLIST *
 set_alpine_id(char *pname, char *pversion)
 {
@@ -1283,7 +1381,7 @@ mm_notify(MAILSTREAM *stream, char *string, long int errflg)
       ps_global->try_to_create = 1;
     else if(!strncmp(string, "[REFERRAL ", 10))
       ;  /* handled in the imap_referral() callback */
-    else if(!strncmp(string, "[ALERT]", 7))
+    else if(!strncmp(string, "[ALERT]", 7) && !mcp_noninteractive())
       q_status_message2(SM_MODAL, 3, 3,
 		        _("Alert received while accessing \"%s\":  %s"),
 			(stream && stream->mailbox)
@@ -1298,6 +1396,10 @@ mm_notify(MAILSTREAM *stream, char *string, long int errflg)
 	  n = (n * 10) + (*p - '0');
 
 	sp_set_first_unseen(stream, n);
+    }
+    else if(mcp_noninteractive()){	/* MCP tool running: never paint */
+	if(errflg == ERROR || errflg == WARN || !strncmp(string, "[ALERT]", 7))
+	  mcp_note_cclient_msg(string, errflg);
     }
     else if(!strncmp(string, "[READ-ONLY]", 11)
 	    && !(stream && stream->mailbox && IS_NEWS(stream)))
@@ -1369,6 +1471,13 @@ mm_log(char *string, long int errflg)
     /* if we took too long to authenticate, ignore this error */
     if(ps_global->in_xoauth2_auth && strstr(string, "[CLOSED]"))
       return;
+
+    if(mcp_noninteractive()){	/* MCP tool running: never paint */
+	if(errflg == ERROR || errflg == WARN)
+	  mcp_note_cclient_msg(string, errflg);
+
+	return;
+    }
 
     strncpy(message, string, sizeof(message));
     message[sizeof(message) - 1] = '\0';
@@ -2391,6 +2500,17 @@ pine_tcptimeout(long int elapsed, long int sincelast, char *host)
 	return 0;
     } 
 
+    if(mcp_noninteractive()){	/* MCP tool running: never prompt */
+	ps_global->tcptimeout = 0;
+	if(elapsed >= (long)ps_global->tcp_query_timeout){
+	    mcp_note_cclient_msg("no reply from server; connection broken",
+				 ERROR);
+	    return(0L);
+	}
+
+	return(rv);
+    }
+
     if(!ps_global->ttyo)
       return(pine_tcptimeout_noscreen(elapsed, sincelast, host));
 
@@ -2509,6 +2629,12 @@ pine_sslcertquery(char *reason, char *host, char *cert)
 	}
 
 	dprint((1, "sslcertificatequery: we were asked before and said No, so ask again\n"));
+    }
+
+    if(mcp_noninteractive()){	/* MCP tool running: only the human approves */
+	mcp_note_cclient_msg("server certificate not approved; open this host on the Alpine screen first",
+			     ERROR);
+	return(0L);
     }
 
     if(ps_global->ttyo){
@@ -2747,6 +2873,13 @@ pine_sslfailure(char *host, char *reason, long unsigned int flags)
 
     if(flags & NET_SILENT)
       return;
+
+    if(mcp_noninteractive()){	/* MCP tool running: never paint */
+	snprintf(buf, sizeof(buf), "SSL/TLS failure for %s: %s", hst, rsn);
+	buf[sizeof(buf)-1] = '\0';
+	mcp_note_cclient_msg(buf, ERROR);
+	return;
+    }
 
     hostlist.name = host ? host : "";
     hostlist.next = NULL;

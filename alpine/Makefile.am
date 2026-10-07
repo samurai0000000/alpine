@@ -22,7 +22,7 @@ alpine_SOURCES = addrbook.c adrbkcmd.c after.c alpine.c arg.c busy.c colorconf.c
 	init.c kblock.c keymenu.c ldapconf.c listsel.c mailcmd.c mailindx.c \
 	mailpart.c mailview.c newuser.c pattern.c pipe.c print.c radio.c remote.c reply.c \
 	roleconf.c send.c setup.c signal.c status.c takeaddr.c titlebar.c smime.c \
-	newmail.c xoauth2conf.c
+	newmail.c xoauth2conf.c mcpui.c
 
 alpine_LDADD = $(LDADD) $(INTLLIBS)
 

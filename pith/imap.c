@@ -32,6 +32,8 @@
 #include "../pith/newmail.h"
 #include "../pith/icache.h"
 #include "../pith/options.h"
+#include "../pith/mcp/mcp.h"
+#include "../pith/mcp/mcpmail.h"
 
 #ifdef _WINDOWS
 #include "../pico/osdep/mswin.h"
@@ -857,12 +859,31 @@ imap_seq_exec_append(MAILSTREAM *stream, long int msgno, void *args)
 void
 mm_login(NETMBX *mb, char *user, char **pwd, long int trial)
 {
+    if(mcp_noninteractive()){	/* MCP tool running: never prompt */
+	mcp_login_cached(mb, user, pwd, trial);
+	return;
+    }
+
     mm_login_work(mb, user, pwd, trial, NULL, NULL);
 }
 
 void
 mm_login_method(NETMBX *mb, char *user, void *login, long int trial, char *method)
 {
+    if(mcp_noninteractive()){	/* MCP tool running: never prompt */
+	/*
+	 * A token login with a refresh token the human already holds is
+	 * done as the human's would be; anything that would need a
+	 * browser, a code or a question is refused.
+	 */
+	if(mcp_oauth2_cached(mb, method, trial))
+	  mm_login_method_work(mb, user, login, trial, method, NULL, NULL);
+	else
+	  mcp_login_method_refused(mb);
+
+	return;
+    }
+
     mm_login_method_work(mb, user, login, trial, method, NULL, NULL);
 }
 

@@ -140,6 +140,7 @@ void	imap_delete_passwd (MMLOGIN_S **, char *, STRLIST_S *, int);
 /* called by build_folder_list(), ok if it does nothing */
 void    set_read_predicted(int);
 void    mm_login_work (NETMBX *mb,char *user,char **pwd,long trial,char *usethisprompt, char *altuserforcache);
+int     mcp_oauth2_cached(NETMBX *mb, char *method, long trial);
 void    mm_login_method_work (NETMBX *mb,char *user,void *login,long trial, char *method, char *usethisprompt, char *altuserforcache);
 
 /* this is necessary to figure out the name of the password file of the application. */

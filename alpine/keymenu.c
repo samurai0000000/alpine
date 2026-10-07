@@ -1014,6 +1014,29 @@ struct key choose_setup_keys[] =
 INST_KEY_MENU(choose_setup_keymenu, choose_setup_keys);
 
 
+/* MCP monitor screen, reached from Setup */
+struct key mcp_monitor_keys[] =
+       {HELP_MENU,
+	{"E",N_("Exit Monitor"),{MC_EXIT,2,{'e',ctrl('C')}},KS_EXITMODE},
+	/* TRANSLATORS: refuse every request from MCP clients */
+	{"L",N_("Lock"),{MC_MON_LOCK,1,{'l'}},KS_NONE},
+	/* TRANSLATORS: allow requests from MCP clients again */
+	{"U",N_("Unlock"),{MC_MON_UNLOCK,1,{'u'}},KS_NONE},
+	/* TRANSLATORS: edit the list of addresses MCP clients may mail */
+	{"W",N_("Whitelist"),{MC_MON_ALLOW,1,{'w'}},KS_NONE},
+	/* TRANSLATORS: switch the aimon connection on or off */
+	{"A",N_("Aimon"),{MC_MON_AIMON,1,{'a'}},KS_NONE},
+	/* TRANSLATORS: close the aimon connection and register again */
+	{"R",N_("Reconnect"),{MC_MON_RECONN,1,{'r'}},KS_NONE},
+	/* TRANSLATORS: remove a pending record */
+	{"P",N_("Pending"),{MC_MON_PENDING,1,{'p'}},KS_NONE},
+	NULL_MENU,
+	NULL_MENU,
+	NULL_MENU,
+	NULL_MENU};
+INST_KEY_MENU(mcp_monitor_keymenu, mcp_monitor_keys);
+
+
 struct key main_keys[] =
        {HELP_MENU,
 	OTHER_MENU,

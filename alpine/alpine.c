@@ -21,6 +21,9 @@
 #include "../pith/list.h"
 #include "../pith/conf.h"
 #include "../pith/body.h"
+#include "../pith/mcp/mcpconf.h"
+#include "../pith/mcp/mcp.h"
+#include "mcpui.h"
 
 #include "osdep/debuging.h"
 #include "osdep/termout.gen.h"
@@ -768,6 +771,12 @@ main(int argc, char **argv)
     if(args.action == aaFolder && init_mail_dir(pine_state) < 0)
       exit(-1);
 
+    /*
+     * MCP policy.  A missing or invalid file leaves MCP off, which is
+     * upstream Alpine.  Read before the screen is configured.
+     */
+    mcp_config_load(pine_state->home_dir);
+
     init_signals();
 
     /*--- input side ---*/
@@ -1429,6 +1438,17 @@ _("Note: Mail-Check-Interval=0 may cause IMAP server connection to time out"));
 #ifdef _WINDOWS
 	mswin_setnewmailwidth(ps_global->nmw_width);
 #endif
+
+	/* MCP listener; does nothing unless config.json enables it */
+	if(mcp_enabled() && mcp_server_start() < 0){
+	    char mcperr[256];
+
+	    mcp_server_last_error(mcperr, sizeof(mcperr));
+	    q_status_message1(SM_ASYNC | SM_DING, 0, 10,
+			      "MCP socket not opened: %s", mcperr);
+	}
+
+	mcp_ui_init();
 
 
         /*-------------------------------------------------------------------
@@ -2409,6 +2429,10 @@ choose_setup_cmd(int cmd, MSGNO_S *msgmap, SCROLL_S *sparms)
 	srv->cmd = 'm';
 	break;
 
+      case MC_MONITOR :		/* MCP monitor screen */
+	srv->cmd = 'i';
+	break;
+
       case MC_EXCEPT :
 	srv->exc = !srv->exc;
 	menu_clear_binding(sparms->keys.menu, 'x');
@@ -2588,6 +2612,14 @@ setup_menu(struct pine *ps)
     so_puts(store, _("    Set client-id and client-secret to use the XOAUTH2\n"));
     so_puts(store, _("    authenticator.\n"));
 
+    if(mcp_enabled()){
+	so_puts(store, "\n");
+	so_puts(store, _("(I) monItor:\n"));
+	so_puts(store, _("    Shows the state of the MCP mail interface: the operator lock, the\n"));
+	so_puts(store, _("    recipient allow-list and the aimon connection. From there you can\n"));
+	so_puts(store, _("    lock or unlock tool calls and edit the allow-list.\n"));
+    }
+
     so_puts(store, "\n");
     so_puts(store, _("(Z) RemoteConfigSetup:\n"));
     so_puts(store, _("    This is a command you will probably only want to use once, if at all.\n"));
@@ -2659,6 +2691,10 @@ setup_menu(struct pine *ps)
       menu_init_binding(sargs.keys.menu, 'x', MC_NO_EXCEPT, "X",
 			N_("eXceptions"), SETUP_EXCEPT);
 
+
+    if(mcp_enabled())
+      menu_init_binding(sargs.keys.menu, 'i', MC_MONITOR, "I",
+			N_("monItor"), SETUP_MONITOR);
 
     scrolltool(&sargs);
 
@@ -2879,6 +2915,12 @@ do_setup_task(int command)
 
       case 'z':
 	convert_to_remote_config(ps_global, edit_exceptions);
+	ps_global->mangled_screen = 1;
+	break;
+
+        /*----- MCP MONITOR -----*/
+      case 'i':
+	mcp_monitor_screen(ps_global);
 	ps_global->mangled_screen = 1;
 	break;
 
@@ -3285,6 +3327,9 @@ goodnight_gracey(struct pine *pine_state, int exit_val)
     extern KBESC_T *kbesc;
 
     dprint((2, "goodnight_gracey:\n"));    
+
+    /* stop taking agent requests before anything is closed */
+    mcp_server_stop();
 
     /* We want to do this here before we close up the streams */
     trim_remote_adrbks();

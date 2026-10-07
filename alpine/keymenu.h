@@ -220,6 +220,13 @@ struct key_menu {
 #define MC_XSADD	807
 #define MC_XSDELETE	808
 #define MC_XSHELP	809
+#define MC_MONITOR	810
+#define MC_MON_LOCK	811
+#define MC_MON_UNLOCK	812
+#define MC_MON_ALLOW	813
+#define MC_MON_AIMON	814
+#define MC_MON_RECONN	815
+#define MC_MON_PENDING	816
 
 /* Commands for S/MIME screens */
 #define MC_TRUST	900
@@ -542,6 +549,7 @@ struct key_menu {
 #define SETUP_DIRECTORY		10
 #define SETUP_EXCEPT		14
 #define SETUP_SMIME		16
+#define SETUP_MONITOR		20
 #define MAIN_HELP_KEY		0
 #define MAIN_DEFAULT_KEY	3
 #define MAIN_KBLOCK_KEY		9
@@ -599,6 +607,7 @@ extern struct key_menu	cancel_keymenu,
 			simple_text_keymenu,
 			oe_keymenu,
 			choose_setup_keymenu,
+			mcp_monitor_keymenu,
 			main_keymenu,
 			simple_file_keymenu,
 			nuov_keymenu,

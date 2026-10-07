@@ -25,6 +25,19 @@
 #ifndef _WINDOWS
 UCS	input_ready(int);
 int	read_one_char(void);
+
+/*
+ * Optional host hooks, NULL unless the host sets them (Alpine does when
+ * MCP is enabled).  input_ready_wake_fd returns an extra descriptor
+ * that may wake input_ready, or -1.  When only that descriptor is
+ * readable, input_ready calls input_ready_wake_run and waits again.
+ * After input_ready_wake_run,
+ * a non-zero result from input_ready_wake_return makes input_ready return
+ * NO_OP_COMMAND, as a timeout does, so that the host's command loop runs.
+ */
+extern int  (*input_ready_wake_fd)(void);
+extern void (*input_ready_wake_run)(void);
+extern int  (*input_ready_wake_return)(void);
 #else /* _WINDOWS */
 int set_time_of_last_input(void);
 #endif /* _WINDOWS */

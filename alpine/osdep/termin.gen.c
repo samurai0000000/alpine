@@ -55,6 +55,7 @@
 #include "termout.gen.h"
 
 #include "../mailcmd.h"
+#include "../mcpui.h"
 
 
 #ifdef	_WINDOWS
@@ -186,6 +187,12 @@ read_command_prep()
     int		i;
     char       *fname;
     MAILSTREAM *m;
+
+    /* MCP: run agent work that arrived while we were busy */
+    mcp_ui_drain();
+
+    /* MCP: an off-list send waits here for the human's yes or no */
+    mcp_ui_confirm();
 
     /*
      * Before we sniff at the input queue, make sure no external event's

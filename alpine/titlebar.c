@@ -25,6 +25,7 @@
 #include "../pith/news.h"
 #include "../pith/util.h"
 #include "../pith/folder.h"
+#include "../pith/mcp/mcpconf.h"
 
 /*
  * Internal prototypes
@@ -465,7 +466,10 @@ format_titlebar(void)
 
     is_context        = as.context_name ? strlen(as.context_name) : 0;
 
-    snprintf(version, sizeof(version), "ALPINE %s", ALPINE_VERSION);
+    if(mcp_enabled())
+      snprintf(version, sizeof(version), "ALPINE(MCP) %s", ALPINE_VERSION);
+    else
+      snprintf(version, sizeof(version), "ALPINE %s", ALPINE_VERSION);
     version[sizeof(version)-1] = '\0';
     ver_len = (int) utf8_width(version);	/* fixed version field width */
 

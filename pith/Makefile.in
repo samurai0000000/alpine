@@ -150,7 +150,9 @@ am_libpith_a_OBJECTS = ablookup.$(OBJEXT) abdlc.$(OBJEXT) \
 	strlst.$(OBJEXT) takeaddr.$(OBJEXT) tempfile.$(OBJEXT) \
 	text.$(OBJEXT) thread.$(OBJEXT) adjtime.$(OBJEXT) \
 	url.$(OBJEXT) util.$(OBJEXT) helptext.$(OBJEXT) \
-	smkeys.$(OBJEXT) smime.$(OBJEXT)
+	smkeys.$(OBJEXT) smime.$(OBJEXT) cJSON.$(OBJEXT) \
+	mcpjson.$(OBJEXT) mcpconf.$(OBJEXT) mcppath.$(OBJEXT) \
+	mcpserv.$(OBJEXT) mcptools.$(OBJEXT) mcpmail.$(OBJEXT) mcpread.$(OBJEXT) mcpidem.$(OBJEXT) mcpwrite.$(OBJEXT)
 libpith_a_OBJECTS = $(am_libpith_a_OBJECTS)
 PROGRAMS = $(noinst_PROGRAMS)
 help_c_gen_SOURCES = help_c_gen.c
@@ -452,7 +454,9 @@ libpith_a_SOURCES = ablookup.c abdlc.c addrbook.c addrstring.c adrbklib.c bldadd
 	margin.c mimedesc.c mimetype.c msgno.c newmail.c news.c pattern.c pipe.c \
 	readfile.c remote.c reply.c rfc2231.c save.c search.c sequence.c send.c sort.c \
 	state.c status.c store.c stream.c string.c strlst.c takeaddr.c tempfile.c text.c \
-	thread.c adjtime.c url.c util.c helptext.c smkeys.c smime.c
+	thread.c adjtime.c url.c util.c helptext.c smkeys.c smime.c \
+	mcp/cJSON.c mcp/mcpjson.c mcp/mcpconf.c \
+	mcp/mcppath.c mcp/mcpserv.c mcp/mcptools.c mcp/mcpmail.c mcp/mcpread.c mcp/mcpidem.c mcp/mcpwrite.c
 
 AM_CPPFLAGS = -I@top_builddir@/include -I@top_srcdir@/include
 CLEANFILES = helptext.c helptext.h help_h_gen help_c_gen
@@ -522,6 +526,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adrbklib.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/bldaddr.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/body.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cJSON.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/charset.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/color.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/conf.Po@am__quote@
@@ -554,6 +559,15 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/maillist.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mailview.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/margin.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcpconf.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcpjson.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcpmail.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcppath.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcpwrite.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcpidem.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcpread.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcpserv.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mcptools.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mimedesc.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mimetype.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/msgno.Po@am__quote@
@@ -605,6 +619,147 @@ distclean-compile:
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='$<' object='$@' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LTCOMPILE) -c -o $@ $<
+
+cJSON.o: mcp/cJSON.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT cJSON.o -MD -MP -MF $(DEPDIR)/cJSON.Tpo -c -o cJSON.o `test -f 'mcp/cJSON.c' || echo '$(srcdir)/'`mcp/cJSON.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/cJSON.Tpo $(DEPDIR)/cJSON.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/cJSON.c' object='cJSON.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o cJSON.o `test -f 'mcp/cJSON.c' || echo '$(srcdir)/'`mcp/cJSON.c
+
+cJSON.obj: mcp/cJSON.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT cJSON.obj -MD -MP -MF $(DEPDIR)/cJSON.Tpo -c -o cJSON.obj `if test -f 'mcp/cJSON.c'; then $(CYGPATH_W) 'mcp/cJSON.c'; else $(CYGPATH_W) '$(srcdir)/mcp/cJSON.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/cJSON.Tpo $(DEPDIR)/cJSON.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/cJSON.c' object='cJSON.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o cJSON.obj `if test -f 'mcp/cJSON.c'; then $(CYGPATH_W) 'mcp/cJSON.c'; else $(CYGPATH_W) '$(srcdir)/mcp/cJSON.c'; fi`
+
+mcpjson.o: mcp/mcpjson.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpjson.o -MD -MP -MF $(DEPDIR)/mcpjson.Tpo -c -o mcpjson.o `test -f 'mcp/mcpjson.c' || echo '$(srcdir)/'`mcp/mcpjson.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpjson.Tpo $(DEPDIR)/mcpjson.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpjson.c' object='mcpjson.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpjson.o `test -f 'mcp/mcpjson.c' || echo '$(srcdir)/'`mcp/mcpjson.c
+
+mcpjson.obj: mcp/mcpjson.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpjson.obj -MD -MP -MF $(DEPDIR)/mcpjson.Tpo -c -o mcpjson.obj `if test -f 'mcp/mcpjson.c'; then $(CYGPATH_W) 'mcp/mcpjson.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpjson.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpjson.Tpo $(DEPDIR)/mcpjson.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpjson.c' object='mcpjson.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpjson.obj `if test -f 'mcp/mcpjson.c'; then $(CYGPATH_W) 'mcp/mcpjson.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpjson.c'; fi`
+
+mcpconf.o: mcp/mcpconf.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpconf.o -MD -MP -MF $(DEPDIR)/mcpconf.Tpo -c -o mcpconf.o `test -f 'mcp/mcpconf.c' || echo '$(srcdir)/'`mcp/mcpconf.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpconf.Tpo $(DEPDIR)/mcpconf.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpconf.c' object='mcpconf.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpconf.o `test -f 'mcp/mcpconf.c' || echo '$(srcdir)/'`mcp/mcpconf.c
+
+mcpconf.obj: mcp/mcpconf.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpconf.obj -MD -MP -MF $(DEPDIR)/mcpconf.Tpo -c -o mcpconf.obj `if test -f 'mcp/mcpconf.c'; then $(CYGPATH_W) 'mcp/mcpconf.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpconf.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpconf.Tpo $(DEPDIR)/mcpconf.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpconf.c' object='mcpconf.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpconf.obj `if test -f 'mcp/mcpconf.c'; then $(CYGPATH_W) 'mcp/mcpconf.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpconf.c'; fi`
+
+mcppath.o: mcp/mcppath.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcppath.o -MD -MP -MF $(DEPDIR)/mcppath.Tpo -c -o mcppath.o `test -f 'mcp/mcppath.c' || echo '$(srcdir)/'`mcp/mcppath.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcppath.Tpo $(DEPDIR)/mcppath.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcppath.c' object='mcppath.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcppath.o `test -f 'mcp/mcppath.c' || echo '$(srcdir)/'`mcp/mcppath.c
+
+mcppath.obj: mcp/mcppath.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcppath.obj -MD -MP -MF $(DEPDIR)/mcppath.Tpo -c -o mcppath.obj `if test -f 'mcp/mcppath.c'; then $(CYGPATH_W) 'mcp/mcppath.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcppath.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcppath.Tpo $(DEPDIR)/mcppath.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcppath.c' object='mcppath.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcppath.obj `if test -f 'mcp/mcppath.c'; then $(CYGPATH_W) 'mcp/mcppath.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcppath.c'; fi`
+
+mcpserv.o: mcp/mcpserv.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpserv.o -MD -MP -MF $(DEPDIR)/mcpserv.Tpo -c -o mcpserv.o `test -f 'mcp/mcpserv.c' || echo '$(srcdir)/'`mcp/mcpserv.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpserv.Tpo $(DEPDIR)/mcpserv.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpserv.c' object='mcpserv.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpserv.o `test -f 'mcp/mcpserv.c' || echo '$(srcdir)/'`mcp/mcpserv.c
+
+mcpserv.obj: mcp/mcpserv.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpserv.obj -MD -MP -MF $(DEPDIR)/mcpserv.Tpo -c -o mcpserv.obj `if test -f 'mcp/mcpserv.c'; then $(CYGPATH_W) 'mcp/mcpserv.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpserv.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpserv.Tpo $(DEPDIR)/mcpserv.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpserv.c' object='mcpserv.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpserv.obj `if test -f 'mcp/mcpserv.c'; then $(CYGPATH_W) 'mcp/mcpserv.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpserv.c'; fi`
+
+mcptools.o: mcp/mcptools.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcptools.o -MD -MP -MF $(DEPDIR)/mcptools.Tpo -c -o mcptools.o `test -f 'mcp/mcptools.c' || echo '$(srcdir)/'`mcp/mcptools.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcptools.Tpo $(DEPDIR)/mcptools.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcptools.c' object='mcptools.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcptools.o `test -f 'mcp/mcptools.c' || echo '$(srcdir)/'`mcp/mcptools.c
+
+mcptools.obj: mcp/mcptools.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcptools.obj -MD -MP -MF $(DEPDIR)/mcptools.Tpo -c -o mcptools.obj `if test -f 'mcp/mcptools.c'; then $(CYGPATH_W) 'mcp/mcptools.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcptools.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcptools.Tpo $(DEPDIR)/mcptools.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcptools.c' object='mcptools.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcptools.obj `if test -f 'mcp/mcptools.c'; then $(CYGPATH_W) 'mcp/mcptools.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcptools.c'; fi`
+
+mcpmail.o: mcp/mcpmail.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpmail.o -MD -MP -MF $(DEPDIR)/mcpmail.Tpo -c -o mcpmail.o `test -f 'mcp/mcpmail.c' || echo '$(srcdir)/'`mcp/mcpmail.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpmail.Tpo $(DEPDIR)/mcpmail.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpmail.c' object='mcpmail.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpmail.o `test -f 'mcp/mcpmail.c' || echo '$(srcdir)/'`mcp/mcpmail.c
+
+mcpmail.obj: mcp/mcpmail.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpmail.obj -MD -MP -MF $(DEPDIR)/mcpmail.Tpo -c -o mcpmail.obj `if test -f 'mcp/mcpmail.c'; then $(CYGPATH_W) 'mcp/mcpmail.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpmail.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpmail.Tpo $(DEPDIR)/mcpmail.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpmail.c' object='mcpmail.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpmail.obj `if test -f 'mcp/mcpmail.c'; then $(CYGPATH_W) 'mcp/mcpmail.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpmail.c'; fi`
+
+
+mcpread.o: mcp/mcpread.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpread.o -MD -MP -MF $(DEPDIR)/mcpread.Tpo -c -o mcpread.o `test -f 'mcp/mcpread.c' || echo '$(srcdir)/'`mcp/mcpread.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpread.Tpo $(DEPDIR)/mcpread.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpread.c' object='mcpread.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpread.o `test -f 'mcp/mcpread.c' || echo '$(srcdir)/'`mcp/mcpread.c
+
+mcpread.obj: mcp/mcpread.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpread.obj -MD -MP -MF $(DEPDIR)/mcpread.Tpo -c -o mcpread.obj `if test -f 'mcp/mcpread.c'; then $(CYGPATH_W) 'mcp/mcpread.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpread.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpread.Tpo $(DEPDIR)/mcpread.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpread.c' object='mcpread.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpread.obj `if test -f 'mcp/mcpread.c'; then $(CYGPATH_W) 'mcp/mcpread.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpread.c'; fi`
+
+mcpidem.o: mcp/mcpidem.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpidem.o -MD -MP -MF $(DEPDIR)/mcpidem.Tpo -c -o mcpidem.o `test -f 'mcp/mcpidem.c' || echo '$(srcdir)/'`mcp/mcpidem.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpidem.Tpo $(DEPDIR)/mcpidem.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpidem.c' object='mcpidem.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpidem.o `test -f 'mcp/mcpidem.c' || echo '$(srcdir)/'`mcp/mcpidem.c
+
+mcpidem.obj: mcp/mcpidem.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpidem.obj -MD -MP -MF $(DEPDIR)/mcpidem.Tpo -c -o mcpidem.obj `if test -f 'mcp/mcpidem.c'; then $(CYGPATH_W) 'mcp/mcpidem.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpidem.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpidem.Tpo $(DEPDIR)/mcpidem.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpidem.c' object='mcpidem.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpidem.obj `if test -f 'mcp/mcpidem.c'; then $(CYGPATH_W) 'mcp/mcpidem.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpidem.c'; fi`
+
+mcpwrite.o: mcp/mcpwrite.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpwrite.o -MD -MP -MF $(DEPDIR)/mcpwrite.Tpo -c -o mcpwrite.o `test -f 'mcp/mcpwrite.c' || echo '$(srcdir)/'`mcp/mcpwrite.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpwrite.Tpo $(DEPDIR)/mcpwrite.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpwrite.c' object='mcpwrite.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpwrite.o `test -f 'mcp/mcpwrite.c' || echo '$(srcdir)/'`mcp/mcpwrite.c
+
+mcpwrite.obj: mcp/mcpwrite.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mcpwrite.obj -MD -MP -MF $(DEPDIR)/mcpwrite.Tpo -c -o mcpwrite.obj `if test -f 'mcp/mcpwrite.c'; then $(CYGPATH_W) 'mcp/mcpwrite.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpwrite.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/mcpwrite.Tpo $(DEPDIR)/mcpwrite.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='mcp/mcpwrite.c' object='mcpwrite.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mcpwrite.obj `if test -f 'mcp/mcpwrite.c'; then $(CYGPATH_W) 'mcp/mcpwrite.c'; else $(CYGPATH_W) '$(srcdir)/mcp/mcpwrite.c'; fi`
 
 mostlyclean-libtool:
 	-rm -f *.lo

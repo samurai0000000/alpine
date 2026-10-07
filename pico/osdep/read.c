@@ -29,6 +29,16 @@
 
 static time_t _time_of_last_input;
 
+#ifndef _WINDOWS
+/*
+ * Optional host hooks; NULL unless the host sets them (Alpine does when
+ * MCP is enabled).  See read.h.
+ */
+int  (*input_ready_wake_fd)(void);
+void (*input_ready_wake_run)(void);
+int  (*input_ready_wake_return)(void);
+#endif /* !_WINDOWS */
+
 time_t
 time_of_last_input(void)
 {
@@ -58,25 +68,51 @@ time_of_last_input(void)
  *         READY_TO_READ: input is available
  *         BAIL_OUT:	  reading input failed, time to bail gracefully
  *         PANIC_NOW:	  system call error, die now
+ *
+ *  If the host's wake descriptor (input_ready_wake_fd) is readable and
+ *  stdin is not, input_ready_wake_run is called and the wait resumes
+ *  with whatever is left of time_out.
  */
 UCS
 input_ready(int time_out)
 {
      struct timeval tmo;
      fd_set         readfds, errfds;
-     int	    res;
+     int	    res, wfd, maxfd, drained = 0;
+     time_t	    deadline = 0, left;
 
      fflush(stdout);
 
-     if(time_out > 0){
+     if(time_out > 0)
+       deadline = time((time_t *) 0) + time_out;
+
+     for(;;){
+	 wfd = (input_ready_wake_fd && input_ready_wake_run)
+		 ? (*input_ready_wake_fd)() : -1;
+
+	 if(time_out <= 0 && wfd < 0)
+	   break;			/* no timeout: the read blocks */
+
          /* Check to see if there are bytes to read with a timeout */
 	 FD_ZERO(&readfds);
 	 FD_ZERO(&errfds);
 	 FD_SET(STDIN_FD, &readfds);
 	 FD_SET(STDIN_FD, &errfds);
-	 tmo.tv_sec  = time_out;
-         tmo.tv_usec = 0; 
-         res = select(STDIN_FD+1, &readfds, 0, &errfds, &tmo);
+	 maxfd = STDIN_FD;
+	 if(wfd >= 0){
+	     FD_SET(wfd, &readfds);
+	     if(wfd > maxfd)
+	       maxfd = wfd;
+	 }
+
+	 if(time_out > 0){
+	     left = drained ? deadline - time((time_t *) 0) : time_out;
+	     tmo.tv_sec  = (left > 0) ? left : 0;
+	     tmo.tv_usec = 0; 
+	 }
+
+         res = select(maxfd+1, &readfds, 0, &errfds,
+		      (time_out > 0) ? &tmo : NULL);
          if(res < 0){
              if(errno == EINTR || errno == EAGAIN)
                return(READ_INTR);
@@ -99,6 +135,25 @@ input_ready(int time_out)
 	      */
              return(time_out < IDLE_TIMEOUT ? NO_OP_COMMAND : NO_OP_IDLE);
          }
+
+	 /* only the host's descriptor: run its work, then wait again */
+	 if(wfd >= 0 && FD_ISSET(wfd, &readfds)
+	    && !FD_ISSET(STDIN_FD, &readfds) && !FD_ISSET(STDIN_FD, &errfds)){
+	     (*input_ready_wake_run)();
+	     drained = 1;
+
+	     /*
+	      * The host asked to be taken back to its command loop (a
+	      * question for the human is waiting).  Return as a timeout
+	      * does, so no key is eaten and read_command_prep runs.
+	      */
+	     if(input_ready_wake_return && (*input_ready_wake_return)())
+	       return(NO_OP_COMMAND);
+
+	     continue;
+	 }
+
+	 break;
      }
 
      _time_of_last_input = time((time_t *) 0);
@@ -129,24 +184,54 @@ input_ready(int time_out)
  *         READY_TO_READ: input is available
  *         BAIL_OUT:	  reading input failed, time to bail gracefully
  *         PANIC_NOW:	  system call error, die now
+ *
+ *  If the host's wake descriptor (input_ready_wake_fd) is readable and
+ *  stdin is not, input_ready_wake_run is called and the wait resumes
+ *  with whatever is left of time_out.
  */
 UCS
 input_ready(int time_out)
 {
-     struct pollfd pollfd;
-     int	   res;
+     struct pollfd pollfd[2];
+     int	   res, wfd, nfds, ms, drained = 0;
+     time_t	   deadline = 0, left;
 
      fflush(stdout);
 
-     if(time_out > 0){
+     if(time_out > 0)
+       deadline = time((time_t *) 0) + time_out;
+
+     for(;;){
+	 wfd = (input_ready_wake_fd && input_ready_wake_run)
+		 ? (*input_ready_wake_fd)() : -1;
+
+	 if(time_out <= 0 && wfd < 0)
+	   break;			/* no timeout: the read blocks */
+
          /* Check to see if there are bytes to read with a timeout */
-	 pollfd.fd = STDIN_FD;
-	 pollfd.events = POLLIN;
-	 res = poll (&pollfd, 1, time_out * 1000);
+	 pollfd[0].fd = STDIN_FD;
+	 pollfd[0].events = POLLIN;
+	 pollfd[0].revents = 0;
+	 nfds = 1;
+	 if(wfd >= 0){
+	     pollfd[1].fd = wfd;
+	     pollfd[1].events = POLLIN;
+	     pollfd[1].revents = 0;
+	     nfds = 2;
+	 }
+
+	 if(time_out > 0){
+	     left = drained ? deadline - time((time_t *) 0) : time_out;
+	     ms = (left > 0) ? (int) left * 1000 : 0;
+	 }
+	 else
+	   ms = -1;
+
+	 res = poll (pollfd, nfds, ms);
 	 if(res >= 0){				/* status bits OK? */
-	     if(pollfd.revents & (POLLERR | POLLNVAL))
+	     if(pollfd[0].revents & (POLLERR | POLLNVAL))
 	       res = -1;			/* bad news, exit below! */
-	     else if(pollfd.revents & POLLHUP)
+	     else if(pollfd[0].revents & POLLHUP)
 	       return(BAIL_OUT);
 	 }
 
@@ -170,6 +255,25 @@ input_ready(int time_out)
 	      */
              return(time_out < IDLE_TIMEOUT ? NO_OP_COMMAND : NO_OP_IDLE);
          }
+
+	 /* only the host's descriptor: run its work, then wait again */
+	 if(nfds == 2 && (pollfd[1].revents & POLLIN)
+	    && !(pollfd[0].revents & POLLIN)){
+	     (*input_ready_wake_run)();
+	     drained = 1;
+
+	     /*
+	      * The host asked to be taken back to its command loop (a
+	      * question for the human is waiting).  Return as a timeout
+	      * does, so no key is eaten and read_command_prep runs.
+	      */
+	     if(input_ready_wake_return && (*input_ready_wake_return)())
+	       return(NO_OP_COMMAND);
+
+	     continue;
+	 }
+
+	 break;
      }
 
      _time_of_last_input = time((time_t *) 0);

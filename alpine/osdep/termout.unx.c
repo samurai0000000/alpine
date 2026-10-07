@@ -295,6 +295,7 @@ get_windsize(struct ttyo *ttyo)
 
     ttyo->screen_cols = MIN(_columns, MAX_SCREEN_COLS);
     ttyo->screen_rows = MIN(_lines, MAX_SCREEN_ROWS);
+
     return(0);
 }
 
