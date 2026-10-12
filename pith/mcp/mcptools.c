@@ -37,7 +37,7 @@
 #define F_LINE	5	/* string, min..max bytes, no control characters */
 #define F_TEXT	6	/* string, min..max bytes, any characters */
 #define F_KEY	7	/* idempotency key, 8..128 of [A-Za-z0-9._-] */
-#define F_FLAG	8	/* \Seen, \Flagged or \Answered */
+#define F_FLAG	8	/* \Seen, \Flagged, \Answered or \Deleted */
 
 typedef struct mcp_field {
     const char *name;
@@ -92,10 +92,11 @@ static const MCP_FIELD_S message_fields[] = {
 };
 
 static const MCP_FIELD_S copy_fields[] = {
-    { "folder",      F_STR, 1, 1, 1024 },
-    { "uid",         F_INT, 1, 1, 4294967295.0 },
-    { "uidvalidity", F_INT, 1, 1, 4294967295.0 },
-    { "destination", F_STR, 1, 1, 1024 },
+    { "folder",      F_STR,  1, 1, 1024 },
+    { "uid",         F_INT,  1, 1, 4294967295.0 },
+    { "uidvalidity", F_INT,  1, 1, 4294967295.0 },
+    { "destination", F_STR,  1, 1, 1024 },
+    { "move",        F_BOOL, 0, 0, 0 },
     { NULL, 0, 0, 0, 0 }
 };
 
@@ -221,14 +222,14 @@ static MCP_TOOL_S mcp_tools[] = {
     },
     {
 	"mail_copy",
-	"File a copy of one message in another folder. The original stays "
-	"where it is; nothing is moved or deleted. folder and destination "
-	"are full mailbox strings from mail_list_folders. Needs uid and "
-	"uidvalidity from a list or search.",
+	"Copy a message to another folder. If move is true, also marks the "
+	"source \\Deleted (source_removed then means marked, not expunged). "
+	"Needs uid and uidvalidity from a list or search.",
 	"{\"type\":\"object\",\"properties\":{\"folder\":{\"type\":\"string\"},"
 	"\"uid\":{\"type\":\"integer\",\"minimum\":1},"
 	"\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1},"
-	"\"destination\":{\"type\":\"string\"}},"
+	"\"destination\":{\"type\":\"string\"},"
+	"\"move\":{\"type\":\"boolean\",\"default\":false}},"
 	"\"required\":[\"folder\",\"uid\",\"uidvalidity\",\"destination\"],"
 	"\"additionalProperties\":false}",
 	validate_copy,
@@ -238,12 +239,12 @@ static MCP_TOOL_S mcp_tools[] = {
     },
     {
 	"mail_set_flag",
-	"Set or clear \\Seen, \\Flagged or \\Answered on one message. "
-	"\\Deleted is refused. Needs uid and uidvalidity from a list or search.",
+	"Set or clear \\Seen, \\Flagged, \\Answered, or \\Deleted on one message. "
+	"Never expunges. Needs uid and uidvalidity from a list or search.",
 	"{\"type\":\"object\",\"properties\":{\"folder\":{\"type\":\"string\"},"
 	"\"uid\":{\"type\":\"integer\",\"minimum\":1},"
 	"\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1},"
-	"\"flag\":{\"type\":\"string\",\"enum\":[\"\\\\Seen\",\"\\\\Flagged\",\"\\\\Answered\"]},"
+	"\"flag\":{\"type\":\"string\",\"enum\":[\"\\\\Seen\",\"\\\\Flagged\",\"\\\\Answered\",\"\\\\Deleted\"]},"
 	"\"set\":{\"type\":\"boolean\"}},"
 	"\"required\":[\"folder\",\"uid\",\"uidvalidity\",\"flag\",\"set\"],"
 	"\"additionalProperties\":false}",
@@ -425,15 +426,11 @@ validate_fields(cJSON *args, const MCP_FIELD_S *spec, char *err, size_t errlen)
 		  return(-1);
 	      }
 
-	      if(!strcmp(v->valuestring, "\\Deleted")){
-		  snprintf(err, errlen, "\\Deleted is not allowed; the agent never deletes");
-		  return(-1);
-	      }
-
 	      if(strcmp(v->valuestring, "\\Seen")
 		 && strcmp(v->valuestring, "\\Flagged")
-		 && strcmp(v->valuestring, "\\Answered")){
-		  snprintf(err, errlen, "flag must be \\Seen, \\Flagged or \\Answered");
+		 && strcmp(v->valuestring, "\\Answered")
+		 && strcmp(v->valuestring, "\\Deleted")){
+		  snprintf(err, errlen, "flag must be \\Seen, \\Flagged, \\Answered or \\Deleted");
 		  return(-1);
 	      }
 

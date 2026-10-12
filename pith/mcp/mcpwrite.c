@@ -16,12 +16,11 @@
  * mail_create_draft.  Main thread only, called from mcp_drain() with
  * mcp_noninteractive() true.
  *
- * What these never do, by plan (frozen decision 6):
+ * What these never do, by plan:
  *   - expunge, or close a stream with CL_EXPUNGE
- *   - set \Deleted
- *   - copy with CP_MOVE, which deletes the source after the copy
  *   - call want_to, or any prompt
- * mail_copy files a copy; the source message stays.
+ * mail_copy files a copy; if move is true, the source is marked \Deleted
+ * but never expunged.
  */
 
 #include "../headers.h"
@@ -43,11 +42,13 @@
 #include "mcpconf.h"
 
 
-/* the only copy flag this file ever passes; never CP_MOVE */
-#define MCP_COPY_FLAGS	(CP_UID)
+/* base copy flags; CP_MOVE is added only when move is true */
+#define MCP_COPY_FLAGS_BASE	(CP_UID)
 
-/* compile-time check that the copy flags never include CP_MOVE */
-typedef char mcp_copy_flags_have_no_cp_move[((MCP_COPY_FLAGS) & (CP_MOVE)) ? -1 : 1];
+/* compile-time check that the base copy flags never include CP_MOVE */
+typedef char mcp_copy_flags_base_have_no_cp_move[((MCP_COPY_FLAGS_BASE) & (CP_MOVE)) ? -1 : 1];
+
+#define MCP_COPY_FLAGS(move)	((MCP_COPY_FLAGS_BASE) | ((move) ? CP_MOVE : 0))
 
 #define MCP_BODY_MAX	262144UL
 
@@ -141,8 +142,8 @@ mcp_copy_by_append(MAILSTREAM *s, unsigned long msgno, unsigned long uid,
 
 
 /*----------------------------------------------------------------------
-    mail_copy: UID COPY of one message to another mailbox.  The source
-    stays where it is.
+    mail_copy: UID COPY of one message to another mailbox.  If move is
+    true, marks the source \Deleted.  Never expunges.
   ----*/
 void
 mcp_run_copy(cJSON *args, MCP_CALL_S *call)
@@ -150,13 +151,15 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
     const char	*dest;
     cJSON	*res, *f;
     MAILSTREAM	*s;
+    MESSAGECACHE *elt;
     char	 seq[32], host[256], err[512];
     unsigned long uid, msgno;
-    int		 opened;
+    int		 opened, move, deleted_now = 0;
     long	 ok;
 
     f    = cJSON_GetObjectItemCaseSensitive(args, "folder");
     dest = mcp_str_arg(args, "destination");
+    move = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(args, "move"));
 
     if(!mcp_mailbox_known(dest)){
 	snprintf(call->folder, sizeof(call->folder), "%s", f->valuestring);
@@ -173,6 +176,12 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
 	return;
     }
 
+    if(move && s->rdonly){
+	mcp_call_error(call, MCP_ERR_INTERNAL, "the folder is read-only");
+	mcp_release(s, opened);
+	return;
+    }
+
     if((msgno = mail_msgno(s, uid)) == 0L){
 	mcp_call_error(call, MCP_ERR_PARAMS, "no message with that uid");
 	mcp_release(s, opened);
@@ -184,7 +193,7 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
 
     if(*dest != '{' && s->mailbox && *s->mailbox != '{'){
 	/* local folder to local folder */
-	ok = pine_mail_copy_full(s, seq, (char *) dest, MCP_COPY_FLAGS);
+	ok = pine_mail_copy_full(s, seq, (char *) dest, MCP_COPY_FLAGS(move));
     }
     else if(*dest == '{' && same_stream((char *) dest, s)){
 	/*
@@ -195,25 +204,24 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
 	const char *local = strchr(dest, '}');
 
 	local = (local && local[1]) ? local + 1 : "INBOX";
-	ok = pine_mail_copy_full(s, seq, (char *) local, MCP_COPY_FLAGS);
+	ok = pine_mail_copy_full(s, seq, (char *) local, MCP_COPY_FLAGS(move));
     }
-    else
-      ok = mcp_copy_by_append(s, msgno, uid, dest, call);
+    else {
+	ok = mcp_copy_by_append(s, msgno, uid, dest, call);
+	if(ok && move)
+	  mail_flag(s, seq, "\\Deleted", ST_UID | ST_SET);
+    }
 
     if(call->code != 0){
 	mcp_release(s, opened);
 	return;
     }
 
-    /* a missing destination folder must not steer the human's next save */
-    ps_global->try_to_create = 0;
-
-    mcp_release(s, opened);
-
     if(mcp_cur_login_needed(host, sizeof(host))){
 	mcp_call_error(call, MCP_ERR_NOT_AUTH,
 		       "host %.200s is not logged in; log in on the Alpine screen",
 		       host);
+	mcp_release(s, opened);
 	return;
     }
 
@@ -222,8 +230,23 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
 	  snprintf(err, sizeof(err), "the copy failed");
 
 	mcp_call_error(call, MCP_ERR_INTERNAL, "%.400s", err);
+	mcp_release(s, opened);
 	return;
     }
+
+    /*
+     * Verify, do not assume: read back elt->deleted before releasing the stream.
+     */
+    if(move){
+	mail_fetch_flags(s, seq, FT_UID);
+	elt = mail_elt(s, msgno);
+	deleted_now = (elt && elt->deleted) ? 1 : 0;
+    }
+
+    /* a missing destination folder must not steer the human's next save */
+    ps_global->try_to_create = 0;
+
+    mcp_release(s, opened);
 
     if((res = cJSON_CreateObject()) == NULL){
 	mcp_call_error(call, MCP_ERR_INTERNAL, "out of memory");
@@ -231,18 +254,22 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
     }
 
     cJSON_AddBoolToObject(res, "copied", 1);
-    cJSON_AddBoolToObject(res, "source_removed", 0);
+    cJSON_AddBoolToObject(res, "source_removed", deleted_now);
     cJSON_AddStringToObject(res, "source", f->valuestring);
     cJSON_AddNumberToObject(res, "uid", (double) uid);
     cJSON_AddStringToObject(res, "destination", dest);
-    snprintf(call->summary, sizeof(call->summary), "copied uid %lu", uid);
+    if(move)
+      snprintf(call->summary, sizeof(call->summary),
+	       "moved uid %lu (source marked \\Deleted)", uid);
+    else
+      snprintf(call->summary, sizeof(call->summary), "copied uid %lu", uid);
     call->result = res;
 }
 
 
 /*----------------------------------------------------------------------
-    mail_set_flag: \Seen, \Flagged or \Answered on one message.  \Deleted
-    is refused by the validator and again here.
+    mail_set_flag: \Seen, \Flagged, \Answered, or \Deleted on one message.
+    Never expunges.
   ----*/
 void
 mcp_run_set_flag(cJSON *args, MCP_CALL_S *call)
@@ -260,10 +287,10 @@ mcp_run_set_flag(cJSON *args, MCP_CALL_S *call)
     set  = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(args, "set"));
 
     if(strcmp(flag, "\\Seen") && strcmp(flag, "\\Flagged")
-       && strcmp(flag, "\\Answered")){
+       && strcmp(flag, "\\Answered") && strcmp(flag, "\\Deleted")){
 	snprintf(call->folder, sizeof(call->folder), "%s", f->valuestring);
 	mcp_call_error(call, MCP_ERR_PARAMS,
-		       "flag must be \\Seen, \\Flagged or \\Answered");
+		       "flag must be \\Seen, \\Flagged, \\Answered or \\Deleted");
 	return;
     }
 
@@ -297,6 +324,8 @@ mcp_run_set_flag(cJSON *args, MCP_CALL_S *call)
       now = elt->seen;
     else if(!strcmp(flag, "\\Flagged"))
       now = elt->flagged;
+    else if(!strcmp(flag, "\\Deleted"))
+      now = elt->deleted;
     else
       now = elt->answered;
 
