@@ -590,18 +590,20 @@ exec_item(MCP_ITEM_S *it, void (*fn)(cJSON *, MCP_CALL_S *), int park_ok)
 }
 
 
-void
+int
 mcp_drain(void)
 {
     MCP_ITEM_S *it;
+    int		count = 0;
 
     if(!srv_running || in_drain)
-      return;
+      return(0);
 
     in_drain = 1;
     pipe_drain(wake_pipe[0]);
 
     while((it = mcp_dequeue()) != NULL){
+	count++;
 	if(it->cancelled){
 	    it->response = mcp_make_error(it->id, MCP_ERR_CANCELLED,
 					  "request cancelled before it started");
@@ -617,6 +619,7 @@ mcp_drain(void)
     }
 
     in_drain = 0;
+    return(count);
 }
 
 
@@ -1112,7 +1115,6 @@ aimon_set_status(const char *fmt, ...)
 }
 
 
-/* any thread */
 void
 mcp_aimon_status(char *buf, size_t len)
 {
@@ -1122,6 +1124,19 @@ mcp_aimon_status(char *buf, size_t len)
     pthread_mutex_lock(&q_mutex);
     snprintf(buf, len, "%s", aimon_status);
     pthread_mutex_unlock(&q_mutex);
+}
+
+
+/* any thread */
+int
+mcp_aimon_connected(void)
+{
+    int connected;
+
+    pthread_mutex_lock(&q_mutex);
+    connected = (strstr(aimon_status, "registered") != NULL);
+    pthread_mutex_unlock(&q_mutex);
+    return(connected);
 }
 
 

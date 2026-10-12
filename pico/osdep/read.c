@@ -37,6 +37,8 @@ static time_t _time_of_last_input;
 int  (*input_ready_wake_fd)(void);
 void (*input_ready_wake_run)(void);
 int  (*input_ready_wake_return)(void);
+int  (*input_ready_timer_check)(unsigned long *timeout_ms);
+void (*input_ready_timer_tick)(void);
 #endif /* !_WINDOWS */
 
 time_t
@@ -80,6 +82,8 @@ input_ready(int time_out)
      fd_set         readfds, errfds;
      int	    res, wfd, maxfd, drained = 0;
      time_t	    deadline = 0, left;
+     unsigned long  spin_ms = 0;
+     int            timer_active;
 
      fflush(stdout);
 
@@ -90,7 +94,9 @@ input_ready(int time_out)
 	 wfd = (input_ready_wake_fd && input_ready_wake_run)
 		 ? (*input_ready_wake_fd)() : -1;
 
-	 if(time_out <= 0 && wfd < 0)
+	 timer_active = (input_ready_timer_check && (*input_ready_timer_check)(&spin_ms));
+
+	 if(time_out <= 0 && wfd < 0 && !timer_active)
 	   break;			/* no timeout: the read blocks */
 
          /* Check to see if there are bytes to read with a timeout */
@@ -105,14 +111,23 @@ input_ready(int time_out)
 	       maxfd = wfd;
 	 }
 
-	 if(time_out > 0){
-	     left = drained ? deadline - time((time_t *) 0) : time_out;
-	     tmo.tv_sec  = (left > 0) ? left : 0;
-	     tmo.tv_usec = 0; 
+	 if(time_out > 0 || timer_active){
+	     unsigned long wait_ms;
+	     if(time_out > 0){
+		 left = drained ? deadline - time((time_t *) 0) : time_out;
+		 wait_ms = (left > 0) ? (unsigned long)(left * 1000) : 0;
+		 if(timer_active && spin_ms < wait_ms)
+		   wait_ms = spin_ms;
+	     }
+	     else{
+		 wait_ms = spin_ms;
+	     }
+	     tmo.tv_sec  = wait_ms / 1000;
+	     tmo.tv_usec = (wait_ms % 1000) * 1000;
 	 }
 
          res = select(maxfd+1, &readfds, 0, &errfds,
-		      (time_out > 0) ? &tmo : NULL);
+		      (time_out > 0 || timer_active) ? &tmo : NULL);
          if(res < 0){
              if(errno == EINTR || errno == EAGAIN)
                return(READ_INTR);
@@ -127,13 +142,16 @@ input_ready(int time_out)
 	         return(BAIL_OUT);
 	     }
 #endif
-	       
-	     /*
-	      * "15" is the minimum allowed mail check interval.
-	      * Anything less, and we're being told to cycle thru
-	      * the command loop because some task is pending...
-	      */
-             return(time_out < IDLE_TIMEOUT ? NO_OP_COMMAND : NO_OP_IDLE);
+	     if(timer_active && input_ready_timer_tick){
+		 (*input_ready_timer_tick)();
+	     }
+
+	     if(time_out > 0 && time((time_t *) 0) >= deadline){
+		 return(time_out < IDLE_TIMEOUT ? NO_OP_COMMAND : NO_OP_IDLE);
+	     }
+
+	     drained = 1;
+	     continue;
          }
 
 	 /* only the host's descriptor: run its work, then wait again */
@@ -195,6 +213,8 @@ input_ready(int time_out)
      struct pollfd pollfd[2];
      int	   res, wfd, nfds, ms, drained = 0;
      time_t	   deadline = 0, left;
+     unsigned long spin_ms = 0;
+     int           timer_active;
 
      fflush(stdout);
 
@@ -205,7 +225,9 @@ input_ready(int time_out)
 	 wfd = (input_ready_wake_fd && input_ready_wake_run)
 		 ? (*input_ready_wake_fd)() : -1;
 
-	 if(time_out <= 0 && wfd < 0)
+	 timer_active = (input_ready_timer_check && (*input_ready_timer_check)(&spin_ms));
+
+	 if(time_out <= 0 && wfd < 0 && !timer_active)
 	   break;			/* no timeout: the read blocks */
 
          /* Check to see if there are bytes to read with a timeout */
@@ -220,9 +242,16 @@ input_ready(int time_out)
 	     nfds = 2;
 	 }
 
-	 if(time_out > 0){
-	     left = drained ? deadline - time((time_t *) 0) : time_out;
-	     ms = (left > 0) ? (int) left * 1000 : 0;
+	 if(time_out > 0 || timer_active){
+	     if(time_out > 0){
+		 left = drained ? deadline - time((time_t *) 0) : time_out;
+		 ms = (left > 0) ? (int)(left * 1000) : 0;
+		 if(timer_active && (int)spin_ms < ms)
+		   ms = (int)spin_ms;
+	     }
+	     else{
+		 ms = (int)spin_ms;
+	     }
 	 }
 	 else
 	   ms = -1;
@@ -248,12 +277,16 @@ input_ready(int time_out)
 	         return(BAIL_OUT);
 	     }
 
-	     /*
-	      * "15" is the minimum allowed mail check interval.
-	      * Anything less, and we're being told to cycle thru
-	      * the command loop because some task is pending...
-	      */
-             return(time_out < IDLE_TIMEOUT ? NO_OP_COMMAND : NO_OP_IDLE);
+	     if(timer_active && input_ready_timer_tick){
+		 (*input_ready_timer_tick)();
+	     }
+
+	     if(time_out > 0 && time((time_t *) 0) >= deadline){
+		 return(time_out < IDLE_TIMEOUT ? NO_OP_COMMAND : NO_OP_IDLE);
+	     }
+
+	     drained = 1;
+	     continue;
          }
 
 	 /* only the host's descriptor: run its work, then wait again */

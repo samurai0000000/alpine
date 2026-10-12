@@ -38,6 +38,8 @@ int	read_one_char(void);
 extern int  (*input_ready_wake_fd)(void);
 extern void (*input_ready_wake_run)(void);
 extern int  (*input_ready_wake_return)(void);
+extern int  (*input_ready_timer_check)(unsigned long *timeout_ms);
+extern void (*input_ready_timer_tick)(void);
 #else /* _WINDOWS */
 int set_time_of_last_input(void);
 #endif /* _WINDOWS */

@@ -26,6 +26,7 @@
 #include "../pith/util.h"
 #include "../pith/folder.h"
 #include "../pith/mcp/mcpconf.h"
+#include "../pith/mcp/mcp.h"
 
 /*
  * Internal prototypes
@@ -80,6 +81,8 @@ static struct titlebar_state {
 		 del_column, 
 		 percent_column,
 		 page_column,
+		 mcp_badge_col,
+		 mcp_spin_col,
 		 screen_cols,
 		 pushed;
     enum	 {Normal, OnlyRead, Closed} stream_status;
@@ -341,6 +344,243 @@ redraw_titlebar(void)
 }
 
 
+static int mcp_active = 0;
+static int mcp_spin_idx = 0;
+static int mcp_rainbow_idx = 0;
+static unsigned long long mcp_last_activity_ms = 0;
+static unsigned long long mcp_next_tick_ms = 0;
+static const char mcp_spin_chars[] = "\\|/-";
+
+struct mcp_active_color {
+    const char *fg;
+    const char *bg;
+};
+
+static const struct mcp_active_color mcp_active_palette[6] = {
+    { "white", "red" },
+    { "black", "yellow" },
+    { "black", "green" },
+    { "black", "cyan" },
+    { "white", "blue" },
+    { "white", "magenta" }
+};
+
+static unsigned long long
+mcp_time_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return ((unsigned long long)tv.tv_sec * 1000ULL) + ((unsigned long long)tv.tv_usec / 1000ULL);
+}
+
+static char *
+mcp_get_titlebar_bg(void)
+{
+    struct variable *vars = ps_global ? ps_global->vars : NULL;
+
+    if(as.title && as.titlecontainer.color.bg && as.titlecontainer.color.bg[0])
+      return as.titlecontainer.color.bg;
+    if(vars && VAR_TITLE_BACK_COLOR && VAR_TITLE_BACK_COLOR[0])
+      return VAR_TITLE_BACK_COLOR;
+    if(vars && VAR_REV_BACK_COLOR && VAR_REV_BACK_COLOR[0])
+      return VAR_REV_BACK_COLOR;
+    if(pico_get_rev_color() && pico_get_rev_color()->bg && pico_get_rev_color()->bg[0])
+      return pico_get_rev_color()->bg;
+    return "black";
+}
+
+static char *
+mcp_get_titlebar_fg(void)
+{
+    struct variable *vars = ps_global ? ps_global->vars : NULL;
+
+    if(as.title && as.titlecontainer.color.fg && as.titlecontainer.color.fg[0])
+      return as.titlecontainer.color.fg;
+    if(vars && VAR_TITLE_FORE_COLOR && VAR_TITLE_FORE_COLOR[0])
+      return VAR_TITLE_FORE_COLOR;
+    if(vars && VAR_REV_FORE_COLOR && VAR_REV_FORE_COLOR[0])
+      return VAR_REV_FORE_COLOR;
+    if(pico_get_rev_color() && pico_get_rev_color()->fg && pico_get_rev_color()->fg[0])
+      return pico_get_rev_color()->fg;
+    return "white";
+}
+
+static void
+mcp_paint_badge(char spin_ch, const char *fg, const char *bg)
+{
+    COLOR_PAIR *delim_cp = NULL, *inner_cp = NULL, *lastc = NULL;
+    char delim_open[2], delim_close[2], inner_buf[4];
+    char *t_fg = mcp_get_titlebar_fg();
+    char *t_bg = mcp_get_titlebar_bg();
+
+    if(as.mcp_badge_col < 0)
+      return;
+
+    delim_open[0]  = (!mcp_aimon_connected() && mcp_config_error()) ? '?' : '(';
+    delim_open[1]  = '\0';
+    delim_close[0] = (!mcp_aimon_connected() && mcp_config_error()) ? '?' : ')';
+    delim_close[1] = '\0';
+
+    inner_buf[0] = 'M';
+    inner_buf[1] = spin_ch;
+    inner_buf[2] = 'P';
+    inner_buf[3] = '\0';
+
+    delim_cp = new_color_pair(t_fg, t_bg);
+    if(delim_cp)
+      lastc = pico_set_colorp(delim_cp, PSC_NONE | PSC_RET);
+
+    PutLine0(0, as.mcp_badge_col, delim_open);
+
+    inner_cp = new_color_pair((char *)fg, (char *)bg);
+    if(inner_cp)
+      (void)pico_set_colorp(inner_cp, PSC_NONE);
+
+    PutLine0(0, as.mcp_badge_col + 1, inner_buf);
+
+    if(delim_cp)
+      (void)pico_set_colorp(delim_cp, PSC_NONE);
+
+    PutLine0(0, as.mcp_badge_col + 4, delim_close);
+
+    if(lastc){
+	(void)pico_set_colorp(lastc, PSC_NONE);
+	free_color_pair(&lastc);
+    }
+    if(delim_cp)
+      free_color_pair(&delim_cp);
+    if(inner_cp)
+      free_color_pair(&inner_cp);
+
+    if(ps_global && ps_global->ttyo)
+      MoveCursor(0, ps_global->ttyo->screen_cols);
+
+    fflush(stdout);
+}
+
+static void
+mcp_format_badge(char *buf, size_t buflen, char spin_ch)
+{
+    char open_ch = (!mcp_aimon_connected() && mcp_config_error()) ? '?' : '(';
+    char close_ch = (!mcp_aimon_connected() && mcp_config_error()) ? '?' : ')';
+    snprintf(buf, buflen, "%cM%cP%c", open_ch, spin_ch, close_ch);
+}
+
+static int
+mcp_titlebar_visible(void)
+{
+    return(mcp_enabled() || mcp_config_error());
+}
+
+char
+mcp_titlebar_spin_char(void)
+{
+    if(mcp_active){
+	return mcp_spin_chars[mcp_spin_idx % 4];
+    }
+    return 'C';
+}
+
+void
+mcp_titlebar_record_activity(void)
+{
+    unsigned long long now = mcp_time_ms();
+    mcp_last_activity_ms = now;
+    if(!mcp_active){
+	mcp_active = 1;
+	mcp_spin_idx = 0;
+	mcp_rainbow_idx = 0;
+	mcp_next_tick_ms = now + 500ULL;
+    }
+}
+
+int
+mcp_titlebar_spin_check(unsigned long *timeout_ms)
+{
+    unsigned long long now;
+
+    if(!mcp_active || !mcp_titlebar_visible() || as.mcp_badge_col < 0)
+      return 0;
+
+    now = mcp_time_ms();
+    if(now >= mcp_last_activity_ms + 3000ULL){
+	if(timeout_ms)
+	  *timeout_ms = 0;
+	return 1;
+    }
+
+    if(now >= mcp_next_tick_ms){
+	if(timeout_ms)
+	  *timeout_ms = 0;
+	return 1;
+    }
+
+    if(timeout_ms)
+      *timeout_ms = (unsigned long)(mcp_next_tick_ms - now);
+
+    return 1;
+}
+
+void
+mcp_titlebar_spin_tick(void)
+{
+    unsigned long long now;
+
+    if(!mcp_active || !mcp_titlebar_visible() || as.mcp_badge_col < 0)
+      return;
+
+    now = mcp_time_ms();
+    if(now >= mcp_last_activity_ms + 3000ULL){
+	int connected = mcp_aimon_connected();
+
+	mcp_active = 0;
+	mcp_spin_idx = 0;
+	mcp_rainbow_idx = 0;
+
+	mcp_paint_badge('C', connected ? "green" : "red", mcp_get_titlebar_bg());
+	return;
+    }
+
+    {
+	char spin_ch = mcp_spin_chars[mcp_spin_idx % 4];
+	const char *fg = mcp_active_palette[mcp_rainbow_idx % 6].fg;
+	const char *bg = mcp_active_palette[mcp_rainbow_idx % 6].bg;
+
+	mcp_spin_idx = (mcp_spin_idx + 1) % 4;
+	mcp_rainbow_idx = (mcp_rainbow_idx + 1) % 6;
+	mcp_next_tick_ms = now + 500ULL;
+
+	mcp_paint_badge(spin_ch, fg, bg);
+    }
+}
+
+void
+mcp_titlebar_spin(int active)
+{
+    if(!mcp_titlebar_visible() || as.mcp_badge_col < 0)
+      return;
+
+    if(active){
+	mcp_titlebar_record_activity();
+    }
+}
+
+void
+mcp_titlebar_color_update(void)
+{
+    int connected;
+
+    if(!mcp_titlebar_visible() || as.mcp_badge_col < 0)
+      return;
+
+    if(mcp_active)
+      return;
+
+    connected = mcp_aimon_connected();
+    mcp_paint_badge(mcp_titlebar_spin_char(), connected ? "green" : "red", mcp_get_titlebar_bg());
+}
+
+
 void
 output_titlebar(TITLE_S *tc)
 {
@@ -360,13 +600,27 @@ output_titlebar(TITLE_S *tc)
     if(tc && tc->titlebar_line)
       PutLine0(0, 0, tc->titlebar_line);
 
-    if (ps_global->ttyo)
-	MoveCursor(0, ps_global->ttyo->screen_cols); /* move to the last column */
-
     if(lastc){
 	(void)pico_set_colorp(lastc, PSC_NONE);
 	free_color_pair(&lastc);
+	lastc = NULL;
     }
+
+    if(mcp_titlebar_visible() && as.mcp_badge_col >= 0){
+	int connected = mcp_aimon_connected();
+	if(mcp_active){
+	    char spin_ch = mcp_titlebar_spin_char();
+	    const char *fg = mcp_active_palette[mcp_rainbow_idx % 6].fg;
+	    const char *bg = mcp_active_palette[mcp_rainbow_idx % 6].bg;
+	    mcp_paint_badge(spin_ch, fg, bg);
+	}
+	else{
+	    mcp_paint_badge('C', connected ? "green" : "red", mcp_get_titlebar_bg());
+	}
+    }
+
+    if (ps_global->ttyo)
+	MoveCursor(0, ps_global->ttyo->screen_cols); /* move to the last column */
 
     fflush(stdout);
 }
@@ -463,11 +717,16 @@ format_titlebar(void)
     as.cur_mess_col   = -1;
     as.percent_column = -1;
     as.page_column    = -1;
+    as.mcp_badge_col  = -1;
+    as.mcp_spin_col   = -1;
 
     is_context        = as.context_name ? strlen(as.context_name) : 0;
 
-    if(mcp_enabled())
-      snprintf(version, sizeof(version), "ALPINE(MCP) %s", ALPINE_VERSION);
+    if(mcp_titlebar_visible()){
+      char badge_buf[16];
+      mcp_format_badge(badge_buf, sizeof(badge_buf), mcp_titlebar_spin_char());
+      snprintf(version, sizeof(version), "ALPINE%s %s", badge_buf, ALPINE_VERSION);
+    }
     else
       snprintf(version, sizeof(version), "ALPINE %s", ALPINE_VERSION);
     version[sizeof(version)-1] = '\0';
@@ -526,6 +785,11 @@ format_titlebar(void)
 
 	ver_len = MAX(MIN(ver_len, avail), 0);
 	avail -= ver_len;
+
+	if(mcp_titlebar_visible() && ver_len >= 11){
+	    as.mcp_badge_col = s1 + 6;
+	    as.mcp_spin_col  = s1 + 8;
+	}
 
 try_smaller_loc:
 

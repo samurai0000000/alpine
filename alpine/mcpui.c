@@ -36,6 +36,7 @@
 #include "radio.h"
 #include "../pith/helptext.h"
 #include "../pith/store.h"
+#include "titlebar.h"
 
 #include <sys/ioctl.h>
 
@@ -56,6 +57,8 @@ mcp_ui_init(void)
 	input_ready_wake_fd = mcp_wake_fd;
 	input_ready_wake_run = mcp_ui_drain;
     }
+    input_ready_timer_check = mcp_titlebar_spin_check;
+    input_ready_timer_tick = mcp_titlebar_spin_tick;
 }
 
 
@@ -90,8 +93,10 @@ mcp_ui_ask(const char *prompt)
 void
 mcp_ui_confirm(void)
 {
-    if(mcp_enabled() && mcp_pending_confirms() > 0)
+    if(mcp_enabled() && mcp_pending_confirms() > 0){
+      mcp_titlebar_record_activity();
       mcp_confirm_pending(mcp_ui_ask);
+    }
 }
 
 
@@ -104,7 +109,8 @@ mcp_ui_drain(void)
     ready_for_winch = 0;
 #endif
 
-    mcp_drain();
+    if(mcp_drain() > 0)
+      mcp_titlebar_record_activity();
 
 #if	defined(SIGWINCH) && defined(TIOCGWINSZ)
     ready_for_winch = armed;
@@ -492,11 +498,13 @@ mcp_monitor_screen(struct pine *ps)
 
 	  case 'a' :
 	    mon_toggle_aimon();
+	    mcp_titlebar_color_update();
 	    break;
 
 	  case 'r' :
 	    if(mcp_aimon_enabled()){
 		mcp_aimon_kick(1);
+		mcp_titlebar_color_update();
 		q_status_message(SM_ORDER, 0, 3,
 				 _("aimon connection dropped, registering again"));
 	    }
@@ -511,6 +519,7 @@ mcp_monitor_screen(struct pine *ps)
 	    break;
 
 	  default :                     /* 'e' */
+	    mcp_titlebar_color_update();
 	    return;
 	}
     }

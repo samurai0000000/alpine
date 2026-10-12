@@ -906,3 +906,28 @@ mcp_config_last_error(char *buf, size_t len)
     snprintf(buf, len, "%s", mcp_conf.last_error);
     pthread_mutex_unlock(&mcp_conf_mutex);
 }
+
+
+int
+mcp_config_ok(void)
+{
+    int ok;
+
+    pthread_mutex_lock(&mcp_conf_mutex);
+    ok = mcp_conf.file_ok && (mcp_conf.last_error[0] == '\0');
+    pthread_mutex_unlock(&mcp_conf_mutex);
+    return(ok);
+}
+
+
+int
+mcp_config_error(void)
+{
+    int err;
+
+    pthread_mutex_lock(&mcp_conf_mutex);
+    err = (mcp_conf.last_error[0] != '\0');
+    pthread_mutex_unlock(&mcp_conf_mutex);
+    return(err);
+}
+

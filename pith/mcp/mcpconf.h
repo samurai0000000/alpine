@@ -63,5 +63,7 @@ int	mcp_set_allow_list(char **, char *, size_t);
 void	mcp_free_list(char ***);
 char   *mcp_config_path(void);
 void	mcp_config_last_error(char *, size_t);
+int	mcp_config_ok(void);
+int	mcp_config_error(void);
 
 #endif /* PITH_MCP_MCPCONF_INCLUDED */

@@ -43,7 +43,7 @@ int	mcp_server_start(void);
 void	mcp_server_stop(void);
 int	mcp_server_running(void);
 int	mcp_wake_fd(void);
-void	mcp_drain(void);
+int	mcp_drain(void);
 int	mcp_noninteractive(void);
 
 /*
@@ -82,5 +82,6 @@ char   *mcp_socket_path(char *, size_t);
  */
 void	mcp_aimon_status(char *, size_t);
 void	mcp_aimon_kick(int);
+int	mcp_aimon_connected(void);
 
 #endif /* PITH_MCP_MCP_INCLUDED */

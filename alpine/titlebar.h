@@ -51,6 +51,11 @@ void	    titlebar_stream_closing(MAILSTREAM *);
 int         update_titlebar_status(void);
 void        check_cue_display(char *);
 void	    free_titlebar_globals(void);
-
+void	    mcp_titlebar_spin(int);
+char	    mcp_titlebar_spin_char(void);
+void	    mcp_titlebar_color_update(void);
+void	    mcp_titlebar_record_activity(void);
+int         mcp_titlebar_spin_check(unsigned long *);
+void	    mcp_titlebar_spin_tick(void);
 
 #endif /* PINE_TITLEBAR_INCLUDED */
