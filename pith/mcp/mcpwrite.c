@@ -149,7 +149,7 @@ void
 mcp_run_copy(cJSON *args, MCP_CALL_S *call)
 {
     const char	*dest;
-    cJSON	*res, *f;
+    cJSON	*res, *f, *uarr;
     MAILSTREAM	*s;
     MESSAGECACHE *elt;
     char	 seq[32], host[256], err[512];
@@ -170,6 +170,263 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
 
     if((s = mcp_acquire(f->valuestring, &opened, call)) == NULL)
       return;
+
+    uarr = cJSON_GetObjectItemCaseSensitive(args, "uids");
+    if(uarr != NULL){
+	MCP_UIDS_S uids;
+	size_t n_req, i;
+	unsigned long copied_count = 0;
+	int state[MCP_UID_BATCH_MAX];
+	size_t n_not_removed = 0;
+	unsigned long not_removed[MCP_UID_BATCH_MAX];
+
+	if(move && s->rdonly){
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "the folder is read-only");
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	if(!mcp_uids_prepare(s, args, call, &uids, NULL, 0, NULL)){
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	n_req = (size_t) cJSON_GetArraySize(uarr);
+	mcp_cur_reset();
+
+	if(*dest != '{' && s->mailbox && *s->mailbox != '{'){
+	    /* local folder to local folder */
+	    ok = pine_mail_copy_full(s, uids.set, (char *) dest, MCP_COPY_FLAGS(move));
+	    copied_count = uids.n;
+	}
+	else if(*dest == '{' && same_stream((char *) dest, s)){
+	    /*
+	     * Same IMAP server: UID COPY takes the folder's name on that
+	     * server, not the "{host}" form (the server answers BAD to it).
+	     * Alpine's own save strips the prefix the same way.
+	     */
+	    const char *local = strchr(dest, '}');
+
+	    local = (local && local[1]) ? local + 1 : "INBOX";
+	    ok = pine_mail_copy_full(s, uids.set, (char *) local, MCP_COPY_FLAGS(move));
+	    copied_count = uids.n;
+	}
+	else {
+	    /* Cross-server append path */
+	    if(n_req > MCP_APPEND_BATCH_MAX || uids.n > MCP_APPEND_BATCH_MAX){
+		mcp_call_error(call, MCP_ERR_PARAMS,
+			       "too many messages to copy between servers");
+		mcp_release(s, opened);
+		return;
+	    }
+
+	    mail_fetch_fast(s, uids.set, FT_UID);
+	    {
+		unsigned long total_size = 0;
+
+		for(i = 0; i < uids.n; i++){
+		    unsigned long m = mail_msgno(s, uids.uid[i]);
+
+		    if(m){
+			MESSAGECACHE *e = mail_elt(s, m);
+
+			if(e)
+			  total_size += e->rfc822_size;
+		    }
+		}
+
+		if(total_size > MCP_APPEND_MAX){
+		    mcp_call_error(call, MCP_ERR_PARAMS,
+				   "messages are too large to copy between servers");
+		    mcp_release(s, opened);
+		    return;
+		}
+	    }
+
+	    ok = 1;
+	    {
+		unsigned long appended_uids[MCP_APPEND_BATCH_MAX];
+
+		for(i = 0; i < uids.n; i++){
+		    unsigned long m = mail_msgno(s, uids.uid[i]);
+
+		    if(!m){
+			if(uids.nmissing < MCP_UID_BATCH_MAX){
+			    size_t k, already = 0;
+
+			    for(k = 0; k < uids.nmissing; k++){
+				if(uids.missing[k] == uids.uid[i]){
+				    already = 1;
+				    break;
+				}
+			    }
+			    if(!already)
+			      uids.missing[uids.nmissing++] = uids.uid[i];
+			}
+			continue;
+		    }
+
+		    if(!mcp_copy_by_append(s, m, uids.uid[i], dest, call)){
+			if(call->code != MCP_ERR_NOT_AUTH){
+			    char reason[512];
+
+			    if(call->message[0] != '\0')
+			      snprintf(reason, sizeof(reason), "%s", call->message);
+			    else
+			      snprintf(reason, sizeof(reason), "the copy failed");
+
+			    mcp_call_error(call, MCP_ERR_INTERNAL,
+					   "copied %lu of %lu messages; failed at uid %lu: %s",
+					   copied_count, (unsigned long) uids.n,
+					   uids.uid[i], reason);
+			}
+			ok = 0;
+			break;
+		    }
+
+		    appended_uids[copied_count++] = uids.uid[i];
+		}
+
+		if(move && copied_count > 0){
+		    char app_set[4096];
+
+		    if(mcp_uid_set(appended_uids, copied_count, app_set, sizeof(app_set)) > 0){
+			mcp_cur_reset();
+			mail_flag(s, app_set, "\\Deleted", ST_UID | ST_SET);
+		    }
+		}
+	    }
+	}
+
+	if(call->code != 0){
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	if(mcp_cur_login_needed(host, sizeof(host))){
+	    mcp_call_error(call, MCP_ERR_NOT_AUTH,
+			   "host %.200s is not logged in; log in on the Alpine screen",
+			   host);
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	if(!ok){
+	    if(!mcp_cur_cclient_error(err, sizeof(err)))
+	      snprintf(err, sizeof(err), "the copy failed");
+
+	    if(strlen(uids.set) > 1000)
+	      mcp_call_error(call, MCP_ERR_INTERNAL,
+			     "%.350s (some messages may already have been copied)", err);
+	    else
+	      mcp_call_error(call, MCP_ERR_INTERNAL, "%.400s", err);
+
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	/* move read-back (before release) */
+	memset(state, 0, sizeof(state));
+	if(move){
+	    if(mcp_uids_prepare(s, args, call, &uids, "\\Deleted", 1, state)){
+		unsigned long differ_uids[MCP_UID_BATCH_MAX];
+		size_t nd = 0;
+
+		for(i = 0; i < n_req; i++){
+		    if(state[i] == MCP_UID_DIFFER){
+			cJSON *it = cJSON_GetArrayItem(uarr, (int) i);
+			differ_uids[nd++] = (unsigned long) it->valuedouble;
+		    }
+		}
+
+		if(nd > 0){
+		    char differ_set[4096];
+
+		    if(mcp_uid_set(differ_uids, nd, differ_set, sizeof(differ_set)) > 0){
+			mcp_cur_reset();
+			mail_flag(s, differ_set, "\\Deleted", ST_UID | ST_SET);
+		    }
+		    mcp_uids_prepare(s, args, call, &uids, "\\Deleted", 1, state);
+		}
+
+		deleted_now = 1;
+		for(i = 0; i < n_req; i++){
+		    if(state[i] == MCP_UID_DIFFER){
+			deleted_now = 0;
+			cJSON *it = cJSON_GetArrayItem(uarr, (int) i);
+			not_removed[n_not_removed++] = (unsigned long) it->valuedouble;
+		    }
+		}
+	    }
+	}
+
+	ps_global->try_to_create = 0;
+	mcp_release(s, opened);
+
+	if((res = cJSON_CreateObject()) == NULL){
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "out of memory");
+	    return;
+	}
+
+	cJSON_AddBoolToObject(res, "copied", 1);
+	cJSON_AddBoolToObject(res, "source_removed", deleted_now);
+	cJSON_AddStringToObject(res, "source", f->valuestring);
+	cJSON_AddItemToObject(res, "uids", cJSON_Duplicate(uarr, 1));
+	cJSON_AddNumberToObject(res, "count", (double) copied_count);
+	cJSON_AddStringToObject(res, "destination", dest);
+
+	if(uids.nmissing > 0 || (move && deleted_now == 0)){
+	    /* Populate missing_uids */
+	    cJSON *missing_arr = NULL;
+
+	    for(i = 0; i < n_req; i++){
+		int is_missing = 0;
+		cJSON *it = cJSON_GetArrayItem(uarr, (int) i);
+		unsigned long req_u = (unsigned long) it->valuedouble;
+
+		if(move && state[i] == MCP_UID_GONE)
+		  is_missing = 1;
+		else {
+		    size_t k;
+
+		    for(k = 0; k < uids.nmissing; k++){
+			if(uids.missing[k] == req_u){
+			    is_missing = 1;
+			    break;
+			}
+		    }
+		}
+
+		if(is_missing){
+		    if(missing_arr == NULL)
+		      missing_arr = cJSON_CreateArray();
+		    cJSON_AddItemToArray(missing_arr, cJSON_CreateNumber(req_u));
+		}
+	    }
+
+	    if(missing_arr != NULL)
+	      cJSON_AddItemToObject(res, "missing_uids", missing_arr);
+	}
+
+	if(move && !deleted_now && n_not_removed > 0){
+	    cJSON *nr_arr = cJSON_CreateArray();
+
+	    for(i = 0; i < n_not_removed; i++)
+	      cJSON_AddItemToArray(nr_arr, cJSON_CreateNumber(not_removed[i]));
+
+	    cJSON_AddItemToObject(res, "not_removed_uids", nr_arr);
+	}
+
+	if(move)
+	  snprintf(call->summary, sizeof(call->summary),
+		   "moved %lu messages (sources marked \\Deleted)", copied_count);
+	else
+	  snprintf(call->summary, sizeof(call->summary),
+		   "copied %lu messages", copied_count);
+
+	call->result = res;
+	return;
+    }
 
     if(!mcp_uid_ok(s, args, call, &uid)){
 	mcp_release(s, opened);
@@ -274,7 +531,7 @@ mcp_run_copy(cJSON *args, MCP_CALL_S *call)
 void
 mcp_run_set_flag(cJSON *args, MCP_CALL_S *call)
 {
-    cJSON	 *f, *res;
+    cJSON	 *f, *res, *uarr;
     const char	 *flag;
     MAILSTREAM	 *s;
     MESSAGECACHE *elt;
@@ -296,6 +553,113 @@ mcp_run_set_flag(cJSON *args, MCP_CALL_S *call)
 
     if((s = mcp_acquire(f->valuestring, &opened, call)) == NULL)
       return;
+
+    uarr = cJSON_GetObjectItemCaseSensitive(args, "uids");
+    if(uarr != NULL){
+	MCP_UIDS_S uids;
+	int state[MCP_UID_BATCH_MAX];
+	size_t n_req, ngone = 0, nmatch = 0, ndiffer = 0, i;
+	int act;
+
+	if(s->rdonly){
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "the folder is read-only");
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	if(!mcp_uids_prepare(s, args, call, &uids, NULL, 0, NULL)){
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	n_req = (size_t) cJSON_GetArraySize(uarr);
+
+	mcp_cur_reset();
+	mail_flag(s, uids.set, (char *) flag, ST_UID | (set ? ST_SET : 0));
+
+	/* read back and mcp_batch_classify pass 1 */
+	if(!mcp_uids_prepare(s, args, call, &uids, flag, set, state)){
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	act = mcp_batch_classify(state, n_req, 1, &ngone, &nmatch, &ndiffer);
+	if(act == MCP_ACT_REISSUE){
+	    unsigned long differ_uids[MCP_UID_BATCH_MAX];
+	    char differ_set[4096];
+	    size_t nd = 0;
+
+	    for(i = 0; i < n_req; i++){
+		if(state[i] == MCP_UID_DIFFER){
+		    cJSON *it = cJSON_GetArrayItem(uarr, (int) i);
+		    differ_uids[nd++] = (unsigned long) it->valuedouble;
+		}
+	    }
+
+	    if(nd > 0 && mcp_uid_set(differ_uids, nd, differ_set, sizeof(differ_set)) > 0){
+		mcp_cur_reset();
+		mail_flag(s, differ_set, (char *) flag, ST_UID | (set ? ST_SET : 0));
+	    }
+
+	    /* read back and mcp_batch_classify pass 2 */
+	    if(!mcp_uids_prepare(s, args, call, &uids, flag, set, state)){
+		mcp_release(s, opened);
+		return;
+	    }
+
+	    act = mcp_batch_classify(state, n_req, 2, &ngone, &nmatch, &ndiffer);
+	}
+
+	if(act == MCP_ACT_FAIL){
+	    unsigned long first_u = 0;
+
+	    for(i = 0; i < n_req; i++){
+		if(state[i] == MCP_UID_DIFFER){
+		    cJSON *it = cJSON_GetArrayItem(uarr, (int) i);
+		    first_u = (unsigned long) it->valuedouble;
+		    break;
+		}
+	    }
+
+	    mcp_call_error(call, MCP_ERR_INTERNAL,
+			   "the server did not change the flag for %lu of %lu messages (first uid %lu)",
+			   (unsigned long) ndiffer,
+			   (unsigned long) (nmatch + ndiffer),
+			   first_u);
+	    mcp_release(s, opened);
+	    return;
+	}
+
+	mcp_release(s, opened);
+
+	if((res = cJSON_CreateObject()) == NULL){
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "out of memory");
+	    return;
+	}
+
+	cJSON_AddStringToObject(res, "mailbox", f->valuestring);
+	cJSON_AddItemToObject(res, "uids", cJSON_Duplicate(uarr, 1));
+	cJSON_AddNumberToObject(res, "count", (double) nmatch);
+	cJSON_AddStringToObject(res, "flag", flag);
+	cJSON_AddBoolToObject(res, "set", set);
+
+	if(ngone > 0){
+	    cJSON *missing_arr = cJSON_CreateArray();
+
+	    for(i = 0; i < n_req; i++){
+		if(state[i] == MCP_UID_GONE){
+		    cJSON *it = cJSON_GetArrayItem(uarr, (int) i);
+		    cJSON_AddItemToArray(missing_arr, cJSON_CreateNumber(it->valuedouble));
+		}
+	    }
+	    cJSON_AddItemToObject(res, "missing_uids", missing_arr);
+	}
+
+	snprintf(call->summary, sizeof(call->summary), "%s %s on %lu messages",
+		 flag, set ? "set" : "cleared", (unsigned long) nmatch);
+	call->result = res;
+	return;
+    }
 
     if(!mcp_uid_ok(s, args, call, &uid)){
 	mcp_release(s, opened);

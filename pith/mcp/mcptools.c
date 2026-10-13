@@ -19,6 +19,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mcpjson.h"
@@ -38,6 +39,8 @@
 #define F_TEXT	6	/* string, min..max bytes, any characters */
 #define F_KEY	7	/* idempotency key, 8..128 of [A-Za-z0-9._-] */
 #define F_FLAG	8	/* \Seen, \Flagged, \Answered or \Deleted */
+#define F_UID_ARRAY	9	/* array of min..max UIDs (1..4294967295), no duplicates */
+#define F_STR_ARRAY	10	/* array of min..max strings (1..1024 bytes), no duplicates */
 
 typedef struct mcp_field {
     const char *name;
@@ -48,7 +51,7 @@ typedef struct mcp_field {
 
 static int	validate_no_args(cJSON *, char *, size_t);
 static int	validate_fields(cJSON *, const MCP_FIELD_S *, char *, size_t);
-static int	validate_folder(cJSON *, char *, size_t);
+static int	validate_status(cJSON *, char *, size_t);
 static int	validate_list_messages(cJSON *, char *, size_t);
 static int	validate_search(cJSON *, char *, size_t);
 static int	validate_get_message(cJSON *, char *, size_t);
@@ -57,11 +60,6 @@ static int	validate_copy(cJSON *, char *, size_t);
 static int	validate_set_flag(cJSON *, char *, size_t);
 static int	validate_draft(cJSON *, char *, size_t);
 static int	validate_send(cJSON *, char *, size_t);
-
-static const MCP_FIELD_S folder_fields[] = {
-    { "folder", F_STR, 1, 1, 1024 },
-    { NULL, 0, 0, 0, 0 }
-};
 
 static const MCP_FIELD_S list_fields[] = {
     { "folder", F_STR, 1, 1, 1024 },
@@ -92,20 +90,28 @@ static const MCP_FIELD_S message_fields[] = {
 };
 
 static const MCP_FIELD_S copy_fields[] = {
-    { "folder",      F_STR,  1, 1, 1024 },
-    { "uid",         F_INT,  1, 1, 4294967295.0 },
-    { "uidvalidity", F_INT,  1, 1, 4294967295.0 },
-    { "destination", F_STR,  1, 1, 1024 },
-    { "move",        F_BOOL, 0, 0, 0 },
+    { "folder",      F_STR,       1, 1, 1024 },
+    { "uid",         F_INT,       0, 1, 4294967295.0 },
+    { "uids",        F_UID_ARRAY, 0, 1, 250 },
+    { "uidvalidity", F_INT,       1, 1, 4294967295.0 },
+    { "destination", F_STR,       1, 1, 1024 },
+    { "move",        F_BOOL,      0, 0, 0 },
     { NULL, 0, 0, 0, 0 }
 };
 
 static const MCP_FIELD_S flag_fields[] = {
-    { "folder",      F_STR,  1, 1, 1024 },
-    { "uid",         F_INT,  1, 1, 4294967295.0 },
-    { "uidvalidity", F_INT,  1, 1, 4294967295.0 },
-    { "flag",        F_FLAG, 1, 0, 0 },
-    { "set",         F_BOOL, 1, 0, 0 },
+    { "folder",      F_STR,       1, 1, 1024 },
+    { "uid",         F_INT,       0, 1, 4294967295.0 },
+    { "uids",        F_UID_ARRAY, 0, 1, 250 },
+    { "uidvalidity", F_INT,       1, 1, 4294967295.0 },
+    { "flag",        F_FLAG,      1, 0, 0 },
+    { "set",         F_BOOL,      1, 0, 0 },
+    { NULL, 0, 0, 0, 0 }
+};
+
+static const MCP_FIELD_S status_fields[] = {
+    { "folder",  F_STR,       0, 1, 1024 },
+    { "folders", F_STR_ARRAY, 0, 1, 32 },
     { NULL, 0, 0, 0, 0 }
 };
 
@@ -152,11 +158,15 @@ static MCP_TOOL_S mcp_tools[] = {
     },
     {
 	"mail_folder_status",
-	"Message, recent and unseen counts and the UIDVALIDITY of one folder. "
-	"folder is a full mailbox string from mail_list_folders.",
-	"{\"type\":\"object\",\"properties\":{\"folder\":{\"type\":\"string\"}},"
-	"\"required\":[\"folder\"],\"additionalProperties\":false}",
-	validate_folder,
+	"Message, recent and unseen counts and the UIDVALIDITY of one folder, "
+	"or folders to inspect up to 32 folders. folder is a single mailbox string; "
+	"folders is an array of mailbox strings from mail_list_folders.",
+	"{\"type\":\"object\",\"properties\":{\"folder\":{\"type\":\"string\"},"
+	"\"folders\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":32,\"uniqueItems\":true,"
+	"\"items\":{\"type\":\"string\"}}},"
+	"\"oneOf\":[{\"required\":[\"folder\"]},{\"required\":[\"folders\"]}],"
+	"\"additionalProperties\":false}",
+	validate_status,
 	mcp_run_folder_status,
 	"folder status",
 	NULL
@@ -222,15 +232,19 @@ static MCP_TOOL_S mcp_tools[] = {
     },
     {
 	"mail_copy",
-	"Copy a message to another folder. If move is true, also marks the "
-	"source \\Deleted (source_removed then means marked, not expunged). "
-	"Needs uid and uidvalidity from a list or search.",
+	"Copy a message to another folder, or uids to act on up to 250 messages "
+	"in one call. If move is true, also marks the source \\Deleted "
+	"(source_removed then means marked, not expunged). Needs uid or uids, "
+	"and uidvalidity from a list or search.",
 	"{\"type\":\"object\",\"properties\":{\"folder\":{\"type\":\"string\"},"
 	"\"uid\":{\"type\":\"integer\",\"minimum\":1},"
+	"\"uids\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":250,\"uniqueItems\":true,"
+	"\"items\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":4294967295}},"
 	"\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1},"
 	"\"destination\":{\"type\":\"string\"},"
 	"\"move\":{\"type\":\"boolean\",\"default\":false}},"
-	"\"required\":[\"folder\",\"uid\",\"uidvalidity\",\"destination\"],"
+	"\"required\":[\"folder\",\"uidvalidity\",\"destination\"],"
+	"\"oneOf\":[{\"required\":[\"uid\"]},{\"required\":[\"uids\"]}],"
 	"\"additionalProperties\":false}",
 	validate_copy,
 	mcp_run_copy,
@@ -239,14 +253,18 @@ static MCP_TOOL_S mcp_tools[] = {
     },
     {
 	"mail_set_flag",
-	"Set or clear \\Seen, \\Flagged, \\Answered, or \\Deleted on one message. "
-	"Never expunges. Needs uid and uidvalidity from a list or search.",
+	"Set or clear \\Seen, \\Flagged, \\Answered, or \\Deleted on one message, "
+	"or uids to act on up to 250 messages in one call. Never expunges. "
+	"Needs uid or uids, and uidvalidity from a list or search.",
 	"{\"type\":\"object\",\"properties\":{\"folder\":{\"type\":\"string\"},"
 	"\"uid\":{\"type\":\"integer\",\"minimum\":1},"
+	"\"uids\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":250,\"uniqueItems\":true,"
+	"\"items\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":4294967295}},"
 	"\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1},"
 	"\"flag\":{\"type\":\"string\",\"enum\":[\"\\\\Seen\",\"\\\\Flagged\",\"\\\\Answered\",\"\\\\Deleted\"]},"
 	"\"set\":{\"type\":\"boolean\"}},"
-	"\"required\":[\"folder\",\"uid\",\"uidvalidity\",\"flag\",\"set\"],"
+	"\"required\":[\"folder\",\"uidvalidity\",\"flag\",\"set\"],"
+	"\"oneOf\":[{\"required\":[\"uid\"]},{\"required\":[\"uids\"]}],"
 	"\"additionalProperties\":false}",
 	validate_set_flag,
 	mcp_run_set_flag,
@@ -454,6 +472,91 @@ validate_fields(cJSON *args, const MCP_FIELD_S *spec, char *err, size_t errlen)
 	      }
 
 	      break;
+
+	    case F_UID_ARRAY:
+	      if(!cJSON_IsArray(v)){
+		  snprintf(err, errlen, "%s must be an array", f->name);
+		  return(-1);
+	      }
+
+	      n = (size_t) cJSON_GetArraySize(v);
+	      if(n < (size_t) f->min || n > (size_t) f->max){
+		  snprintf(err, errlen, "%s must have %d to %d elements", f->name,
+			   (int) f->min, (int) f->max);
+		  return(-1);
+	      }
+
+	      {
+		  unsigned long uids[MCP_UID_BATCH_MAX];
+		  cJSON *elem;
+		  size_t i, j;
+
+		  for(elem = v->child, i = 0; elem; elem = elem->next, i++){
+		      if(!cJSON_IsNumber(elem)
+			 || elem->valuedouble != (double)(long long) elem->valuedouble
+			 || elem->valuedouble < 1.0 || elem->valuedouble > 4294967295.0){
+			  snprintf(err, errlen,
+				   "%s elements must be integers from 1 to 4294967295",
+				   f->name);
+			  return(-1);
+		      }
+
+		      uids[i] = (unsigned long) elem->valuedouble;
+		  }
+
+		  for(i = 0; i < n; i++)
+		    for(j = i + 1; j < n; j++)
+		      if(uids[i] == uids[j]){
+			  snprintf(err, errlen, "%s must not contain duplicate uids",
+				   f->name);
+			  return(-1);
+		      }
+	      }
+
+	      break;
+
+	    case F_STR_ARRAY:
+	      if(!cJSON_IsArray(v)){
+		  snprintf(err, errlen, "%s must be an array", f->name);
+		  return(-1);
+	      }
+
+	      n = (size_t) cJSON_GetArraySize(v);
+	      if(n < (size_t) f->min || n > (size_t) f->max){
+		  snprintf(err, errlen, "%s must have %d to %d elements", f->name,
+			   (int) f->min, (int) f->max);
+		  return(-1);
+	      }
+
+	      {
+		  cJSON *elem, *other;
+
+		  for(elem = v->child; elem; elem = elem->next){
+		      size_t slen;
+
+		      if(!cJSON_IsString(elem)){
+			  snprintf(err, errlen, "%s elements must be strings", f->name);
+			  return(-1);
+		      }
+
+		      slen = strlen(elem->valuestring);
+		      if(slen < 1 || slen > 1024){
+			  snprintf(err, errlen, "%s elements must be 1 to 1024 bytes",
+				   f->name);
+			  return(-1);
+		      }
+
+		      for(other = v->child; other != elem; other = other->next){
+			  if(!strcmp(elem->valuestring, other->valuestring)){
+			      snprintf(err, errlen,
+				       "%s must not contain duplicate folders", f->name);
+			      return(-1);
+			  }
+		      }
+		  }
+	      }
+
+	      break;
 	  }
       }
 
@@ -469,9 +572,21 @@ validate_fields(cJSON *args, const MCP_FIELD_S *spec, char *err, size_t errlen)
 
 
 static int
-validate_folder(cJSON *args, char *err, size_t errlen)
+validate_status(cJSON *args, char *err, size_t errlen)
 {
-    return(validate_fields(args, folder_fields, err, errlen));
+    cJSON *f, *fs;
+
+    if(validate_fields(args, status_fields, err, errlen) < 0)
+      return(-1);
+
+    f = cJSON_GetObjectItemCaseSensitive(args, "folder");
+    fs = cJSON_GetObjectItemCaseSensitive(args, "folders");
+    if((f != NULL && fs != NULL) || (f == NULL && fs == NULL)){
+	snprintf(err, errlen, "must provide exactly one of folder or folders");
+	return(-1);
+    }
+
+    return(0);
 }
 
 
@@ -499,14 +614,38 @@ validate_get_message(cJSON *args, char *err, size_t errlen)
 static int
 validate_copy(cJSON *args, char *err, size_t errlen)
 {
-    return(validate_fields(args, copy_fields, err, errlen));
+    cJSON *uid, *uids;
+
+    if(validate_fields(args, copy_fields, err, errlen) < 0)
+      return(-1);
+
+    uid = cJSON_GetObjectItemCaseSensitive(args, "uid");
+    uids = cJSON_GetObjectItemCaseSensitive(args, "uids");
+    if((uid != NULL && uids != NULL) || (uid == NULL && uids == NULL)){
+	snprintf(err, errlen, "must provide exactly one of uid or uids");
+	return(-1);
+    }
+
+    return(0);
 }
 
 
 static int
 validate_set_flag(cJSON *args, char *err, size_t errlen)
 {
-    return(validate_fields(args, flag_fields, err, errlen));
+    cJSON *uid, *uids;
+
+    if(validate_fields(args, flag_fields, err, errlen) < 0)
+      return(-1);
+
+    uid = cJSON_GetObjectItemCaseSensitive(args, "uid");
+    uids = cJSON_GetObjectItemCaseSensitive(args, "uids");
+    if((uid != NULL && uids != NULL) || (uid == NULL && uids == NULL)){
+	snprintf(err, errlen, "must provide exactly one of uid or uids");
+	return(-1);
+    }
+
+    return(0);
 }
 
 
@@ -571,4 +710,102 @@ mcp_tools_list_json(void)
     }
 
     return(res);
+}
+
+
+static int
+uid_cmp(const void *a, const void *b)
+{
+    unsigned long ua = *(const unsigned long *) a;
+    unsigned long ub = *(const unsigned long *) b;
+
+    return (ua < ub) ? -1 : (ua > ub) ? 1 : 0;
+}
+
+
+long
+mcp_uid_set(const unsigned long *uids, size_t n, char *out, size_t outlen)
+{
+    unsigned long sorted[MCP_UID_BATCH_MAX];
+    char tmp[4096];
+    size_t i, pos = 0;
+    char chunk[64];
+    int len;
+
+    if(out == NULL || outlen == 0)
+      return(-1);
+
+    if(n == 0){
+	out[0] = '\0';
+	return(0);
+    }
+
+    if(n > MCP_UID_BATCH_MAX)
+      return(-1);
+
+    for(i = 0; i < n; i++)
+      sorted[i] = uids[i];
+
+    qsort(sorted, n, sizeof(unsigned long), uid_cmp);
+
+    for(i = 0; i < n; ){
+	unsigned long start = sorted[i];
+	unsigned long end = start;
+
+	while(i + 1 < n && sorted[i + 1] == end + 1){
+	    end = sorted[i + 1];
+	    i++;
+	}
+	i++;
+
+	if(start == end)
+	  len = snprintf(chunk, sizeof(chunk), "%s%lu", (pos > 0) ? "," : "", start);
+	else
+	  len = snprintf(chunk, sizeof(chunk), "%s%lu:%lu", (pos > 0) ? "," : "", start, end);
+
+	if(len < 0 || pos + (size_t) len >= sizeof(tmp))
+	  return(-1);
+
+	memcpy(tmp + pos, chunk, (size_t) len);
+	pos += (size_t) len;
+    }
+
+    tmp[pos] = '\0';
+
+    if(pos + 1 > outlen)
+      return(-1);
+
+    memcpy(out, tmp, pos + 1);
+    return((long) pos);
+}
+
+
+int
+mcp_batch_classify(const int *state, size_t n, int pass, size_t *ngone, size_t *nmatch, size_t *ndiffer)
+{
+    size_t gone = 0, match = 0, differ = 0, i;
+
+    for(i = 0; i < n; i++){
+	if(state[i] == MCP_UID_GONE)
+	  gone++;
+	else if(state[i] == MCP_UID_MATCH)
+	  match++;
+	else if(state[i] == MCP_UID_DIFFER)
+	  differ++;
+    }
+
+    if(ngone)
+      *ngone = gone;
+    if(nmatch)
+      *nmatch = match;
+    if(ndiffer)
+      *ndiffer = differ;
+
+    if(differ == 0)
+      return(MCP_ACT_DONE);
+
+    if(pass == 1)
+      return(MCP_ACT_REISSUE);
+
+    return(MCP_ACT_FAIL);
 }

@@ -59,8 +59,34 @@ typedef struct mcp_tool {
 
 
 /* mcptools.c */
+#define MCP_UID_BATCH_MAX	250
+#define MCP_FOLDER_BATCH_MAX	32
+#define MCP_APPEND_BATCH_MAX	25
+
+enum {
+    MCP_UID_GONE = 0,
+    MCP_UID_MATCH,
+    MCP_UID_DIFFER
+};
+
+enum {
+    MCP_ACT_DONE = 0,
+    MCP_ACT_REISSUE,
+    MCP_ACT_FAIL
+};
+
+typedef struct mcp_uids {
+    unsigned long uid[MCP_UID_BATCH_MAX];
+    size_t	  n;
+    unsigned long missing[MCP_UID_BATCH_MAX];
+    size_t	  nmissing;
+    char	  set[4096];
+} MCP_UIDS_S;
+
 MCP_TOOL_S *mcp_tool_lookup(const char *);
 cJSON	   *mcp_tools_list_json(void);
+long	    mcp_uid_set(const unsigned long *, size_t, char *, size_t);
+int	    mcp_batch_classify(const int *, size_t, int, size_t *, size_t *, size_t *);
 
 /* mcpserv.c: per-call state written by the c-client callbacks */
 void	mcp_call_error(MCP_CALL_S *, int, const char *, ...);
@@ -84,6 +110,8 @@ struct mail_stream	*mcp_acquire(const char *, int *, MCP_CALL_S *);
 void	mcp_release(struct mail_stream *, int);
 int	mcp_uid_ok(struct mail_stream *, cJSON *, MCP_CALL_S *, unsigned long *);
 char   *mcp_clean_utf8(const char *, size_t, size_t);
+int	mcp_uids_prepare(struct mail_stream *, cJSON *, MCP_CALL_S *,
+			 MCP_UIDS_S *, const char *, int, int *);
 
 /* mcpidem.c, main thread */
 #define MCP_IDEM_ERROR		(-1)

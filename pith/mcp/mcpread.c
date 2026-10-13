@@ -190,6 +190,172 @@ mcp_uid_ok(MAILSTREAM *s, cJSON *args, MCP_CALL_S *call, unsigned long *uid)
 }
 
 
+/*
+ * Preflight and read-back for batch UIDs operations (plan section 2.3).
+ *
+ * When flag is NULL: preflight mode.
+ * Resolves requested UIDs against the stream into uids->uid and uids->missing,
+ * formats uids->set.  Fails with -32602 if uidvalidity mismatches or no UID
+ * resolves.
+ *
+ * When flag is not NULL: read-back mode.
+ * Refreshes cache and classifies each of the requested UIDs into state[i]:
+ * MCP_UID_MATCH, MCP_UID_DIFFER, or MCP_UID_GONE.
+ */
+int
+mcp_uids_prepare(MAILSTREAM *s, cJSON *args, MCP_CALL_S *call,
+		 MCP_UIDS_S *uids, const char *flag, int flag_val, int *state)
+{
+    cJSON	  *uarr, *v;
+    size_t	   i, j, n_req = 0;
+    unsigned long  req_uids[MCP_UID_BATCH_MAX];
+    unsigned long  sorted_uids[MCP_UID_BATCH_MAX];
+    char	   req_set[4096];
+    SEARCHSET	  *head = NULL, *tail = NULL;
+    SEARCHPGM	  *pgm;
+    unsigned long  found_msgnos[MCP_UID_BATCH_MAX];
+    unsigned long  found_uids[MCP_UID_BATCH_MAX];
+    size_t	   nfound = 0;
+
+    v = cJSON_GetObjectItemCaseSensitive(args, "uidvalidity");
+    if(!cJSON_IsNumber(v)){
+	mcp_call_error(call, MCP_ERR_PARAMS, "uidvalidity is required");
+	return(0);
+    }
+
+    if((unsigned long) v->valuedouble != (unsigned long) s->uid_validity){
+	mcp_call_error(call, MCP_ERR_PARAMS,
+		       "uidvalidity does not match this folder (it is now %lu)",
+		       (unsigned long) s->uid_validity);
+	return(0);
+    }
+
+    uarr = cJSON_GetObjectItemCaseSensitive(args, "uids");
+    if(!cJSON_IsArray(uarr)){
+	mcp_call_error(call, MCP_ERR_PARAMS, "uids must be an array");
+	return(0);
+    }
+
+    n_req = (size_t) cJSON_GetArraySize(uarr);
+    if(n_req == 0 || n_req > MCP_UID_BATCH_MAX){
+	mcp_call_error(call, MCP_ERR_PARAMS, "uids array length out of bounds");
+	return(0);
+    }
+
+    for(i = 0; i < n_req; i++){
+	cJSON *item = cJSON_GetArrayItem(uarr, (int) i);
+	if(!cJSON_IsNumber(item)){
+	    mcp_call_error(call, MCP_ERR_PARAMS, "uids elements must be integers");
+	    return(0);
+	}
+	req_uids[i] = (unsigned long) item->valuedouble;
+	sorted_uids[i] = req_uids[i];
+    }
+
+    /* Ping stream to sync new arrivals */
+    pine_mail_ping(s);
+
+    /* Sort ascending copy for SEARCHSET and req_set */
+    for(i = 0; i < n_req; i++){
+	for(j = i + 1; j < n_req; j++){
+	    if(sorted_uids[j] < sorted_uids[i]){
+		unsigned long tmp = sorted_uids[i];
+		sorted_uids[i] = sorted_uids[j];
+		sorted_uids[j] = tmp;
+	    }
+	}
+    }
+
+    /* Build SEARCHSET */
+    head = mail_newsearchset();
+    tail = head;
+    for(i = 0; i < n_req; i++)
+      tail = mail_append_set(tail, sorted_uids[i]);
+
+    pgm = mail_newsearchpgm();
+    pgm->uid = head;
+
+    mcp_cur_reset();
+    pine_mail_search_full(s, NULL, pgm, SE_FREE | SE_NOPREFETCH);
+
+    if(mcp_uid_set(sorted_uids, n_req, req_set, sizeof(req_set)) < 0){
+	mcp_call_error(call, MCP_ERR_INTERNAL, "sequence set too long");
+	return(0);
+    }
+
+    mail_fetch_flags(s, req_set, FT_UID);
+
+    /* Scan found messages */
+    for(j = 1; j <= s->nmsgs && nfound < MCP_UID_BATCH_MAX; j++){
+	if(mail_elt(s, j)->searched){
+	    found_msgnos[nfound] = j;
+	    found_uids[nfound] = mail_uid(s, j);
+	    nfound++;
+	}
+    }
+
+    if(uids)
+      memset(uids, 0, sizeof(*uids));
+
+    for(i = 0; i < n_req; i++){
+	unsigned long target = req_uids[i];
+	unsigned long msgno = 0;
+
+	for(j = 0; j < nfound; j++){
+	    if(found_uids[j] == target){
+		msgno = found_msgnos[j];
+		break;
+	    }
+	}
+
+	if(msgno > 0){
+	    if(uids && uids->n < MCP_UID_BATCH_MAX)
+	      uids->uid[uids->n++] = target;
+
+	    if(state != NULL && flag != NULL){
+		MESSAGECACHE *elt = mail_elt(s, msgno);
+		int cur = 0;
+
+		if(!strcmp(flag, "\\Seen"))
+		  cur = elt->seen;
+		else if(!strcmp(flag, "\\Flagged"))
+		  cur = elt->flagged;
+		else if(!strcmp(flag, "\\Deleted"))
+		  cur = elt->deleted;
+		else
+		  cur = elt->answered;
+
+		if((cur ? 1 : 0) == (flag_val ? 1 : 0))
+		  state[i] = MCP_UID_MATCH;
+		else
+		  state[i] = MCP_UID_DIFFER;
+	    }
+	}
+	else {
+	    if(uids && uids->nmissing < MCP_UID_BATCH_MAX)
+	      uids->missing[uids->nmissing++] = target;
+
+	    if(state != NULL)
+	      state[i] = MCP_UID_GONE;
+	}
+    }
+
+    if(flag == NULL){
+	if(uids && uids->n == 0){
+	    mcp_call_error(call, MCP_ERR_PARAMS, "no message with that uid");
+	    return(0);
+	}
+
+	if(uids && mcp_uid_set(uids->uid, uids->n, uids->set, sizeof(uids->set)) < 0){
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "sequence set too long");
+	    return(0);
+	}
+    }
+
+    return(1);
+}
+
+
 /*----------------------------------------------------------------------
     UTF-8 hygiene.  Returns how many leading bytes of s are valid UTF-8
     (no overlong forms, no surrogates, nothing above U+10FFFF).
@@ -535,34 +701,27 @@ mcp_is_ascii(const char *s)
 /*----------------------------------------------------------------------
     mail_folder_status
   ----*/
-void
-mcp_run_folder_status(cJSON *args, MCP_CALL_S *call)
+static void
+status_one(const char *mbox, cJSON *res, MCP_CALL_S *c)
 {
-    cJSON      *f, *res;
-    MAILSTREAM *s;
-    char	host[256], err[512];
+    MAILSTREAM   *s;
+    char	  host[256], err[512];
     unsigned long messages, recent, unseen, uidnext, i;
-    long	ok;
+    long	  ok;
 
-    f = cJSON_GetObjectItemCaseSensitive(args, "folder");
-    snprintf(call->folder, sizeof(call->folder), "%s", f->valuestring);
+    snprintf(c->folder, sizeof(c->folder), "%s", mbox);
 
-    if(!mcp_mailbox_known(f->valuestring)){
-	mcp_call_error(call, MCP_ERR_PARAMS,
+    if(!mcp_mailbox_known(mbox)){
+	mcp_call_error(c, MCP_ERR_PARAMS,
 		       "folder is not a mailbox string returned by mail_list_folders");
 	return;
     }
 
-    if((res = cJSON_CreateObject()) == NULL){
-	mcp_call_error(call, MCP_ERR_INTERNAL, "out of memory");
-	return;
-    }
+    cJSON_AddStringToObject(res, "mailbox", mbox);
 
-    cJSON_AddStringToObject(res, "mailbox", f->valuestring);
-
-    s = already_open_stream(f->valuestring, AOS_NONE);
+    s = already_open_stream((char *) mbox, AOS_NONE);
     if(s == NULL && ps_global->mail_stream
-       && same_stream_and_mailbox(f->valuestring, ps_global->mail_stream)
+       && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)
        && !sp_dead_stream(ps_global->mail_stream))
       s = ps_global->mail_stream;
 
@@ -593,32 +752,29 @@ mcp_run_folder_status(cJSON *args, MCP_CALL_S *call)
 	cJSON_AddNumberToObject(res, "unseen", (double) unseen);
 	cJSON_AddNumberToObject(res, "uidvalidity", (double) s->uid_validity);
 	cJSON_AddNumberToObject(res, "uidnext", (double) s->uid_last + 1);
-	snprintf(call->summary, sizeof(call->summary), "%lu messages",
+	snprintf(c->summary, sizeof(c->summary), "%lu messages",
 		 (unsigned long) s->nmsgs);
-	call->result = res;
 	return;
     }
 
     mcp_cur_reset();
     memset(&mm_status_result, 0, sizeof(mm_status_result));
-    ok = pine_mail_status(NULL, f->valuestring,
+    ok = pine_mail_status(NULL, (char *) mbox,
 			  SA_MESSAGES | SA_RECENT | SA_UNSEEN
 			  | SA_UIDVALIDITY | SA_UIDNEXT);
 
     if(mcp_cur_login_needed(host, sizeof(host))){
-	cJSON_Delete(res);
-	mcp_call_error(call, MCP_ERR_NOT_AUTH,
+	mcp_call_error(c, MCP_ERR_NOT_AUTH,
 		       "host %.200s is not logged in; log in on the Alpine screen",
 		       host);
 	return;
     }
 
     if(!ok){
-	cJSON_Delete(res);
 	if(!mcp_cur_cclient_error(err, sizeof(err)))
 	  snprintf(err, sizeof(err), "STATUS failed");
 
-	mcp_call_error(call, MCP_ERR_INTERNAL, "%.400s", err);
+	mcp_call_error(c, MCP_ERR_INTERNAL, "%.400s", err);
 	return;
     }
 
@@ -644,8 +800,89 @@ mcp_run_folder_status(cJSON *args, MCP_CALL_S *call)
     if(mm_status_result.flags & SA_UIDNEXT)
       cJSON_AddNumberToObject(res, "uidnext", (double) uidnext);
 
-    snprintf(call->summary, sizeof(call->summary), "%lu messages", messages);
-    call->result = res;
+    snprintf(c->summary, sizeof(c->summary), "%lu messages", messages);
+}
+
+
+void
+mcp_run_folder_status(cJSON *args, MCP_CALL_S *call)
+{
+    cJSON *f, *farr;
+
+    f = cJSON_GetObjectItemCaseSensitive(args, "folder");
+    if(f != NULL){
+	cJSON *res = cJSON_CreateObject();
+
+	if(res == NULL){
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "out of memory");
+	    return;
+	}
+
+	status_one(f->valuestring, res, call);
+	if(call->code != 0){
+	    cJSON_Delete(res);
+	    return;
+	}
+
+	call->result = res;
+	return;
+    }
+
+    farr = cJSON_GetObjectItemCaseSensitive(args, "folders");
+    if(farr != NULL){
+	cJSON *res, *statuses_arr;
+	int n_folders, i;
+
+	n_folders = cJSON_GetArraySize(farr);
+	if(n_folders > 0){
+	    cJSON *first_f = cJSON_GetArrayItem(farr, 0);
+
+	    if(first_f && first_f->valuestring)
+	      snprintf(call->folder, sizeof(call->folder), "%s", first_f->valuestring);
+	}
+
+	statuses_arr = cJSON_CreateArray();
+	if(statuses_arr == NULL){
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "out of memory");
+	    return;
+	}
+
+	for(i = 0; i < n_folders; i++){
+	    cJSON *item = cJSON_GetArrayItem(farr, i);
+	    const char *mbox = (item && item->valuestring) ? item->valuestring : "";
+	    cJSON *entry = cJSON_CreateObject();
+	    MCP_CALL_S local_c;
+
+	    memset(&local_c, 0, sizeof(local_c));
+	    status_one(mbox, entry, &local_c);
+
+	    if(local_c.code != 0){
+		cJSON_Delete(entry);
+		entry = cJSON_CreateObject();
+		cJSON_AddStringToObject(entry, "mailbox", mbox);
+		cJSON *err_obj = cJSON_CreateObject();
+		cJSON_AddNumberToObject(err_obj, "code", (double) local_c.code);
+		cJSON_AddStringToObject(err_obj, "message", local_c.message);
+		cJSON_AddItemToObject(entry, "error", err_obj);
+	    }
+
+	    cJSON_AddItemToArray(statuses_arr, entry);
+	}
+
+	res = cJSON_CreateObject();
+	if(res == NULL){
+	    cJSON_Delete(statuses_arr);
+	    mcp_call_error(call, MCP_ERR_INTERNAL, "out of memory");
+	    return;
+	}
+
+	cJSON_AddItemToObject(res, "statuses", statuses_arr);
+	snprintf(call->summary, sizeof(call->summary), "%d folders", n_folders);
+	call->result = res;
+	return;
+    }
+
+    mcp_call_error(call, MCP_ERR_PARAMS, "folder or folders is required");
 }
 
 
