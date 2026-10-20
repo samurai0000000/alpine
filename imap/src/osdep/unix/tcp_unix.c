@@ -24,6 +24,7 @@
  */
 
 #include "ip_unix.c"
+#include <netinet/tcp.h>
 
 #undef write			/* don't use redefined write() */
 
@@ -271,6 +272,22 @@ int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
   }
 
   else {			/* get current socket flags */
+    {
+      int optval = 1;
+      setsockopt (sock,SOL_SOCKET,SO_KEEPALIVE,(void *) &optval,sizeof (optval));
+#if defined(IPPROTO_TCP) && defined(TCP_KEEPIDLE)
+      optval = 45;
+      setsockopt (sock,IPPROTO_TCP,TCP_KEEPIDLE,(void *) &optval,sizeof (optval));
+#endif
+#if defined(IPPROTO_TCP) && defined(TCP_KEEPINTVL)
+      optval = 10;
+      setsockopt (sock,IPPROTO_TCP,TCP_KEEPINTVL,(void *) &optval,sizeof (optval));
+#endif
+#if defined(IPPROTO_TCP) && defined(TCP_KEEPCNT)
+      optval = 3;
+      setsockopt (sock,IPPROTO_TCP,TCP_KEEPCNT,(void *) &optval,sizeof (optval));
+#endif
+    }
     flgs = fcntl (sock,F_GETFL,0);
 				/* set non-blocking if want open timeout */
     if (ctr) fcntl (sock,F_SETFL,flgs | FNDELAY);

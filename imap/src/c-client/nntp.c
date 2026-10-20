@@ -335,7 +335,7 @@ void nntp_list (MAILSTREAM *stream,char *ref,char *pat)
 {
   MAILSTREAM *st = stream;
   char *s,*t,*lcl,pattern[MAILTMPLEN],name[MAILTMPLEN],wildmat[MAILTMPLEN];
-  int showuppers = pat[strlen (pat) - 1] == '%';
+  int showuppers = *pat ? (pat[strlen (pat) - 1] == '%') : 0;
   if (!*pat) {
     if (nntp_canonicalize (ref,"*",pattern,NIL)) {
 				/* tie off name at root */

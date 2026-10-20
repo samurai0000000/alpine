@@ -126,14 +126,19 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
      */
     for(i = 0; i < ps_global->s_pool.nstream; i++){
 	m = ps_global->s_pool.streams[i];
-	if(m && m->auth.name
+	if(m && !sp_dead_stream(m) && m->auth.name
 	   && (!strucmp(m->auth.name, OA2NAME) || !strucmp(m->auth.name, BEARERNAME))
-	   && now + 60 > m->auth.expiration){	/* procastinate doing this */
+	   && now + 180 >= m->auth.expiration){	/* procastinate doing this */
 	      int skip = m->auth.expiration == 0 ? 1 : 0;
 	      dprint((9, "renew_accesstoken: %s: now = %lu, auth = %s, expiration = %lu\n", STREAMNAME(m), now, m->auth.name, m->auth.expiration));
 	      ps_global->noshow_error = 1;	/* make this invisible to the user */
 	      renew_accesstoken(m);
-	      if(skip == 0) mail_renew_stream(m);
+	      if(skip == 0) {
+		mail_renew_stream(m);
+	      } else if(m->auth.expiration > 0 && now + 180 >= m->auth.expiration) {
+		renew_accesstoken(m);
+		mail_renew_stream(m);
+	      }
 	      ps_global->noshow_error = 0;	/* return to normal status */
 	      dprint((9, "renew_accesstoken: %s: result: expiration = %lu\n", STREAMNAME(m), m->auth.expiration));
 	}
@@ -193,6 +198,13 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	  interval = ps_global->check_interval_for_noncurr;
 	else
 	  interval = timeo;
+
+	if(is_imap_stream(m)){
+	    if(interval > 60)
+	      interval = 60;
+	    if(adj_idle_timeout > 60)
+	      adj_idle_timeout = 60;
+	}
 
 	/*
 	 * We want to make sure that we notice expunges, but we don't have
@@ -347,6 +359,13 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	  interval = ps_global->check_interval_for_noncurr;
 	else
 	  interval = timeo;
+
+	if(is_imap_stream(m)){
+	    if(interval > 60)
+	      interval = 60;
+	    if(adj_idle_timeout > 60)
+	      adj_idle_timeout = 60;
+	}
 
 	if(interval <= adj_idle_timeout)
 	  expunged_reaper_to = MIN(MAX(2*interval,180), adj_idle_timeout);

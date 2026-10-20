@@ -119,10 +119,19 @@ mcp_acquire(const char *mbox, int *opened, MCP_CALL_S *call)
     mcp_cur_reset();
 
     s = already_open_stream((char *) mbox, AOS_NONE);
+    if(s != NULL && is_imap_stream(s) && !pine_mail_ping(s)){
+	sp_mark_stream_dead(s);
+	s = NULL;
+    }
+
     if(s == NULL && ps_global->mail_stream
-       && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)
-       && !sp_dead_stream(ps_global->mail_stream))
-      s = ps_global->mail_stream;
+       && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)){
+	if(!sp_dead_stream(ps_global->mail_stream)
+	   || pine_attempt_reconnect(ps_global->mail_stream) == 1)
+	  s = ps_global->mail_stream;
+    }
+
+    mcp_cur_reset();
 
     if(s != NULL)
       return(s);

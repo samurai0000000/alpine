@@ -460,6 +460,7 @@ MAILSTREAM    *same_stream_and_mailbox(char *, MAILSTREAM *);
 int	       same_remote_mailboxes(char *, char *);
 int	       is_imap_stream(MAILSTREAM *);
 int	       modern_imap_stream(MAILSTREAM *);
+int	       pine_attempt_reconnect(MAILSTREAM *);
 int	       streams_died(void);
 int	       some_stream_is_locked(void);
 void           appenduid_cb(char *mailbox,unsigned long uidvalidity, SEARCHSET *set);

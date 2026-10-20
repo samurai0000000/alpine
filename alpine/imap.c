@@ -1008,7 +1008,7 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
 	     NewAccessToken = cpystr(s);
 	     s = t;
 	     NewExpirationTime = strtol(s, &s, 10);
-	     if(NewExpirationTime <= 0 || NewExpirationTime <= time(0))
+	     if(NewExpirationTime <= 0 || NewExpirationTime <= time(0) + 120)
 		NewExpirationTime = 0L;
 	  }
        }
@@ -1088,7 +1088,6 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
 	&& (NewAccessToken == NULL || strcmp(OldAccessToken, NewAccessToken))){
 	if(NewAccessToken) fs_give((void **) &NewAccessToken);
 	NewAccessToken = cpystr(OldAccessToken);
-	NewAccessToken = OldAccessToken;
 	ChangeAccessToken++;
 	NewExpirationTime = OldExpirationTime;
 	SaveRefreshToken = NewRefreshToken;
@@ -1107,6 +1106,8 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
        oa2list->first_time = login->first_time;
        oa2list->cancel_refresh_token = login->cancel_refresh_token;
        *login = *oa2list;	/* load login pointer */
+       oa2list->param[OA2_RefreshToken].value = NULL;
+       oa2list->access_token = NULL;
     }
     if(token) fs_give((void **) &token);
 

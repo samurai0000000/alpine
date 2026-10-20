@@ -99,7 +99,8 @@ int
 can_set_flag(struct pine *state, char *cmd, int permflag)
 {
     if((!permflag && READONLY_FOLDER(state->mail_stream))
-       || sp_dead_stream(state->mail_stream)){
+       || (sp_dead_stream(state->mail_stream)
+           && !(pine_attempt_reconnect(state->mail_stream) == 1))){
 	q_status_message2(SM_ORDER | (sp_dead_stream(state->mail_stream)
 				        ? SM_DING : 0),
 			  0, 3,
@@ -177,6 +178,9 @@ cmd_delete(struct pine *state, MSGNO_S *msgmap, int copts,
     dprint((3, "DELETE: msg %s\n", sequence ? sequence : "?"));
     new = sp_new_mail_count(state->mail_stream);
     mail_flag(state->mail_stream, sequence, "\\DELETED", ST_SET);
+    if(sp_dead_stream(state->mail_stream)
+       && pine_attempt_reconnect(state->mail_stream) == 1)
+      mail_flag(state->mail_stream, sequence, "\\DELETED", ST_SET);
     fs_give((void **) &sequence);
     if(new != sp_new_mail_count(state->mail_stream))
       process_filter_patterns(state->mail_stream, state->msgmap,
@@ -252,6 +256,9 @@ cmd_undelete(struct pine *state, MSGNO_S *msgmap, int copts)
     dprint((3, "UNDELETE: msg %s\n", sequence ? sequence : "?"));
 
     mail_flag(state->mail_stream, sequence, "\\DELETED", 0L);
+    if(sp_dead_stream(state->mail_stream)
+       && pine_attempt_reconnect(state->mail_stream) == 1)
+      mail_flag(state->mail_stream, sequence, "\\DELETED", 0L);
     fs_give((void **) &sequence);
 
     if((copts & MCMD_SILENT) == 0){

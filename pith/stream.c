@@ -3252,6 +3252,83 @@ modern_imap_stream(MAILSTREAM *stream)
 
 
 /*----------------------------------------------------------------------
+    Attempt to reconnect a dead stream
+
+  Returns: 1 if healed in-place
+          -1 if mailbox changed/expunged, full reopen required
+           0 if reconnect failed or rate-limited
+ ----*/
+int
+pine_attempt_reconnect(MAILSTREAM *stream)
+{
+    static time_t last_fail_time = 0;
+    static int consec_failures = 0;
+    static MAILSTREAM *last_fail_stream = NULL;
+    time_t now;
+    int save_noshow_error, save_noshow_warn;
+    long rv;
+
+    if(!stream || !sp_dead_stream(stream) || !is_imap_stream(stream) || stream->lock)
+      return 0;
+
+    now = time(0);
+
+    if(stream != last_fail_stream){
+	consec_failures = 0;
+	last_fail_time = 0;
+	last_fail_stream = NULL;
+    }
+
+    if(consec_failures > 0){
+	if(consec_failures >= 2 && (now - last_fail_time) < 30)
+	  return 0;
+	if(consec_failures == 1 && (now - last_fail_time) < 5)
+	  return 0;
+    }
+
+    save_noshow_error = ps_global->noshow_error;
+    save_noshow_warn = ps_global->noshow_warn;
+    ps_global->noshow_error = 1;
+    ps_global->noshow_warn = 1;
+
+    if(stream->auth.name
+       && (!strucmp(stream->auth.name, OA2NAME) || !strucmp(stream->auth.name, BEARERNAME))
+       && stream->auth.expiration > 0
+       && now + 180 >= stream->auth.expiration)
+      renew_accesstoken(stream);
+
+    rv = mail_renew_stream(stream);
+
+    ps_global->noshow_error = save_noshow_error;
+    ps_global->noshow_warn = save_noshow_warn;
+
+    if(rv == 0L){
+	sp_set_dead_stream(stream, 0);
+	sp_set_noticed_dead_stream(stream, 0);
+	sp_set_io_error_on_stream(stream, 0);
+	sp_set_last_ping(stream, time(0));
+	sp_set_last_activity(stream, time(0));
+	consec_failures = 0;
+	last_fail_time = 0;
+	last_fail_stream = NULL;
+	return 1;
+    }
+    else if(rv == -1L){
+	consec_failures = 0;
+	last_fail_time = 0;
+	last_fail_stream = NULL;
+	return -1;
+    }
+    else{
+	last_fail_stream = stream;
+	last_fail_time = time(0);
+	consec_failures++;
+	return 0;
+    }
+}
+
+
+/*----------------------------------------------------------------------
      Check and see if all the stream are alive
 
 Returns:  0 if there was no change

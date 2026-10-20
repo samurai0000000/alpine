@@ -592,7 +592,7 @@ void renew_accesstoken(MAILSTREAM *stream)
     if(oauth2.access_token)	/* we need a new one */
       fs_give((void **) &oauth2.access_token);
 
-    if(stream->auth.expiration == 0){
+    if(stream->auth.expiration == 0 && oauth2.expiration > time(0) + 180){
        stream->auth.expiration = oauth2.expiration;
        if(oauth2.param[OA2_RefreshToken].value) fs_give((void **) &oauth2.param[OA2_RefreshToken].value);
        return;

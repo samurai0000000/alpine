@@ -1262,9 +1262,20 @@ long mail_status_default (MAILSTREAM *stream,char *mbx,long flags)
  */
 long mail_renew_stream (MAILSTREAM *stream)
 {
-  MAILSTREAM *m = mail_open(NIL, stream->original_mailbox, OP_SILENT);
-  long rv = stream && m ? (stream->dtb->renew)(stream, m) : 1;
-  mail_close(m);
+  long flags = OP_SILENT;
+  MAILSTREAM *m;
+  long rv = 1L;
+
+  if (!stream || !stream->dtb || !stream->dtb->renew || !stream->original_mailbox)
+    return 1L;
+  if (stream->debug) flags |= OP_DEBUG;
+  if (stream->halfopen) flags |= OP_HALFOPEN;
+  if (stream->rdonly) flags |= OP_READONLY;
+  m = mail_open(NIL, stream->original_mailbox, flags);
+  if (m) {
+    rv = (*stream->dtb->renew)(stream, m);
+    mail_close(m);
+  }
   return rv;
 }
 /* Mail open

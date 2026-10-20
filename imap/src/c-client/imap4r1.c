@@ -801,12 +801,37 @@ long imap_status (MAILSTREAM *stream,char *mbx,long flags)
  */
 long imap_renew (MAILSTREAM *stream, MAILSTREAM *m)
 {
-  IMAPLOCAL *MLOCAL = (IMAPLOCAL *) m->local;
+  IMAPLOCAL *MLOCAL;
   NETSTREAM *xnetstream;
+
+  if (!stream || !m || !LOCAL || !m->local) return 1L;
+  MLOCAL = (IMAPLOCAL *) m->local;
+  if (!MLOCAL->netstream) return 1L;
+
+  if (!stream->halfopen) {
+    if (m->uid_validity != stream->uid_validity ||
+        m->nmsgs < stream->nmsgs ||
+        (m->uid_last - stream->uid_last) != (m->nmsgs - stream->nmsgs))
+      return -1L;
+    if (stream->nmsgs > 0 && mail_elt (stream, stream->nmsgs)->private.uid != 0) {
+      if (mail_uid (m, stream->nmsgs) != mail_elt (stream, stream->nmsgs)->private.uid)
+        return -1L;
+    }
+  }
 
   xnetstream = LOCAL->netstream;
   LOCAL->netstream = MLOCAL->netstream;
   MLOCAL->netstream = xnetstream;
+
+  LOCAL->byeseen = NIL;
+  MLOCAL->byeseen = T;
+
+  stream->uid_last = m->uid_last;
+
+  if (!stream->halfopen && m->nmsgs > stream->nmsgs) {
+    mail_exists (stream, m->nmsgs);
+    mail_recent (stream, m->recent);
+  }
 
   return 0L;
 }
