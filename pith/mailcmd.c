@@ -532,6 +532,23 @@ do_broach_folder(char *newfolder, CONTEXT_S *new_context, MAILSTREAM **streamp,
 	    if(sp_dead_stream(ps_global->mail_stream)){
 		dprint((2, "Stream was dead, reopening \"%s\"\n",
 				      newfolder ? newfolder : "?"));
+		if(ps_global->mail_stream->dtb
+		   && ps_global->mail_stream->dtb->name
+		   && !strcmp(ps_global->mail_stream->dtb->name, "imap")){
+		    int rc = pine_attempt_reconnect(ps_global->mail_stream);
+		    if(rc != 0){
+			q_status_message(SM_ORDER, 0, 2,
+					 rc == 1 ? _("Folder connection restored.")
+						 : _("Folder reconnected and synchronized."));
+			ps_global->mangled_header = 1;
+			if(!(flags & DB_NOVISIT))
+			  sp_set_recent_since_visited(ps_global->mail_stream, 0L);
+			return(1);
+		    }
+		    else{
+			return(-1);
+		    }
+		}
 	    }
 
 	    /* clean up */
@@ -580,6 +597,54 @@ do_broach_folder(char *newfolder, CONTEXT_S *new_context, MAILSTREAM **streamp,
 	}
     }
 
+    {
+	MAILSTREAM **cur_stream = streamp ? streamp
+	    : (ps_global->mail_stream ? &ps_global->mail_stream : NULL);
+
+	if(cur_stream && *cur_stream && sp_dead_stream(*cur_stream)
+	   && (*cur_stream)->dtb && (*cur_stream)->dtb->name
+	   && !strcmp((*cur_stream)->dtb->name, "imap")){
+	    char *tgt = open_inbox ? ps_global->VAR_INBOX_PATH : expanded_file;
+	    char *cur_mbx = (*cur_stream)->original_mailbox
+			      ? (*cur_stream)->original_mailbox
+			      : (*cur_stream)->mailbox;
+	    char tgt_applied[MAILTMPLEN];
+	    int match = 0;
+
+	    if(same_remote_mailboxes(tgt, cur_mbx))
+	      match = 1;
+	    else if(new_context && !open_inbox){
+		context_apply(tgt_applied, new_context, tgt, sizeof(tgt_applied));
+		if(same_remote_mailboxes(tgt_applied, cur_mbx))
+		  match = 1;
+	    }
+
+	    if(match){
+		int rc = pine_attempt_reconnect(*cur_stream);
+		if(rc != 0){
+		    q_status_message(SM_ORDER, 0, 2,
+				     rc == 1 ? _("Folder connection restored.")
+					     : _("Folder reconnected and synchronized."));
+		    if(stream && stream != *cur_stream){
+			pine_mail_close(stream);
+			stream = NULL;
+		    }
+		    if(!(flags & DB_NOVISIT))
+		      sp_set_recent_since_visited(*cur_stream, 0L);
+		    ps_global->mangled_header = 1;
+		    return(1);
+		}
+		else if(*cur_stream == ps_global->mail_stream){
+		    if(stream && stream != *cur_stream){
+			pine_mail_close(stream);
+			stream = NULL;
+		    }
+		    return(-1);
+		}
+	    }
+	}
+    }
+
     /*--- Opening inbox, inbox has been already opened, the easy case ---*/
     /*
      * [ It is probably true that we could eliminate most of this special ]
@@ -595,9 +660,21 @@ do_broach_folder(char *newfolder, CONTEXT_S *new_context, MAILSTREAM **streamp,
 	 * dead INBOX.
 	 */
 	dprint((2, "INBOX was dead, closing before reopening\n"));
-	pine_mail_actually_close(strm);
+	if(strm->dtb && strm->dtb->name && !strcmp(strm->dtb->name, "imap")){
+	    int rc = pine_attempt_reconnect(strm);
+	    if(rc != 0){
+		q_status_message(SM_ORDER, 0, 2,
+				 rc == 1 ? _("Folder connection restored.")
+					 : _("Folder reconnected and synchronized."));
+	    }
+	}
+	if(sp_dead_stream(strm)){
+	    if(strm == ps_global->mail_stream)
+	      return(-1);
+	    pine_mail_actually_close(strm);
+	}
       }
-      else{
+      if(!sp_dead_stream(strm)){
 	/*
 	 * Clean up the mail_stream we're leaving.
 	 */

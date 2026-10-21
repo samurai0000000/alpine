@@ -77,6 +77,8 @@ typedef struct pine_per_stream_data {
     time_t        last_chkpnt_done;
     time_t        last_use_time;
     time_t        last_activity;
+    time_t        last_reconnect_time;
+    int           reconnect_failures;
     imapuid_t     saved_uid_validity;
     imapuid_t     saved_uid_last;
     char         *saved_cur_msg_id;
@@ -165,6 +167,9 @@ typedef struct pine_per_stream_data {
 
 #define SP_PERMLOCKED	0x10000000
 #define SP_LOCKED	0x20000000
+#define SP_TEMP		SP_TEMPUSE
+
+#define sp_locked(s)	sp_flagged((s), SP_LOCKED)
 
 #define SP_MATCH	0x00100000
 #define SP_SAME		0x00200000
@@ -460,6 +465,12 @@ MAILSTREAM    *same_stream_and_mailbox(char *, MAILSTREAM *);
 int	       same_remote_mailboxes(char *, char *);
 int	       is_imap_stream(MAILSTREAM *);
 int	       modern_imap_stream(MAILSTREAM *);
+time_t	       sp_last_reconnect_time(MAILSTREAM *);
+void	       sp_set_last_reconnect_time(MAILSTREAM *, time_t);
+int	       sp_reconnect_failures(MAILSTREAM *);
+void	       sp_set_reconnect_failures(MAILSTREAM *, int);
+void	       sp_set_msgmap(MAILSTREAM *, MSGNO_S *);
+void	       pine_resync_stream_after_renew(MAILSTREAM *, unsigned long);
 int	       pine_attempt_reconnect(MAILSTREAM *);
 int	       streams_died(void);
 int	       some_stream_is_locked(void);

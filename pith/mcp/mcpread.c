@@ -119,16 +119,42 @@ mcp_acquire(const char *mbox, int *opened, MCP_CALL_S *call)
     mcp_cur_reset();
 
     s = already_open_stream((char *) mbox, AOS_NONE);
-    if(s != NULL && is_imap_stream(s) && !pine_mail_ping(s)){
-	sp_mark_stream_dead(s);
-	s = NULL;
+    if(s == NULL)
+      s = sp_stream_get((char *) mbox, SP_MATCH | SP_RO_OK);
+    if(s != NULL){
+	if(sp_dead_stream(s) || (is_imap_stream(s) && !pine_mail_ping(s))){
+	    if(is_imap_stream(s) && pine_attempt_reconnect(s) != 0){
+		mcp_cur_reset();
+		return(s);
+	    }
+
+	    sp_mark_stream_dead(s);
+	    s = NULL;
+	}
+	else{
+	    mcp_cur_reset();
+	    return(s);
+	}
     }
 
-    if(s == NULL && ps_global->mail_stream
-       && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)){
+    if(s == NULL && ps_global->mail_stream){
 	if(!sp_dead_stream(ps_global->mail_stream)
-	   || pine_attempt_reconnect(ps_global->mail_stream) == 1)
-	  s = ps_global->mail_stream;
+	   && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)){
+	    s = ps_global->mail_stream;
+	    mcp_cur_reset();
+	    return(s);
+	}
+	else if(sp_dead_stream(ps_global->mail_stream)){
+	    char *pmbox = ps_global->mail_stream->original_mailbox ?
+			  ps_global->mail_stream->original_mailbox : ps_global->mail_stream->mailbox;
+	    if(pmbox && same_remote_mailboxes((char *) mbox, pmbox)
+	       && is_imap_stream(ps_global->mail_stream)
+	       && pine_attempt_reconnect(ps_global->mail_stream) != 0){
+		s = ps_global->mail_stream;
+		mcp_cur_reset();
+		return(s);
+	    }
+	}
     }
 
     mcp_cur_reset();

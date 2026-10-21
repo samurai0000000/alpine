@@ -327,7 +327,16 @@ mm_login_oauth2_c_client_method (NETMBX *mb, char *user, char *method,
 			mm_log("Client not authorized (wrong client-id?)", ERROR);
 			oauth2->cancel_refresh_token++;
 			break;
-	   case HTTP_OK: if(oauth2->access_token)
+	   case HTTP_OK: {
+			 JSON_S *refresh_tok = json_body_value(json, "refresh_token");
+			 if(refresh_tok && refresh_tok->jtype == JString
+			    && refresh_tok->value && *((char *) refresh_tok->value)){
+			   if(oauth2->param[OA2_RefreshToken].value)
+			     fs_give((void **) &oauth2->param[OA2_RefreshToken].value);
+			   oauth2->param[OA2_RefreshToken].value = cpystr((char *) refresh_tok->value);
+			   oauth2->flags |= OA2_NEW_REFRESH_TOKEN;
+			 }
+			 if(oauth2->access_token)
 			    fs_give((void **) &oauth2->access_token);
 			 json_assign ((void **) &oauth2->access_token, json, "access_token", JString);
 			 if((jx = json_body_value(json, "expires_in")) != NULL)
@@ -341,6 +350,7 @@ mm_login_oauth2_c_client_method (NETMBX *mb, char *user, char *method,
 			 oauth2->cancel_refresh_token = 0;	/* do not cancel this token. It is good */
 			 mm_log("Got new refresh token.", (long) NIL);
 			 break;
+			 }
 
 	     default :  { char tmp[200];
 			  char *err, *err_desc;
@@ -592,9 +602,9 @@ void renew_accesstoken(MAILSTREAM *stream)
     if(oauth2.access_token)	/* we need a new one */
       fs_give((void **) &oauth2.access_token);
 
-    if(stream->auth.expiration == 0 && oauth2.expiration > time(0) + 180){
+    if(oauth2.expiration > time(0) + 180){
        stream->auth.expiration = oauth2.expiration;
-       if(oauth2.param[OA2_RefreshToken].value) fs_give((void **) &oauth2.param[OA2_RefreshToken].value);
+       oauth2_free_extra_values(oauth2);
        return;
     }
 
@@ -602,9 +612,10 @@ void renew_accesstoken(MAILSTREAM *stream)
 
     mm_login_oauth2_c_client_method (&mb, user, stream->auth.name, &oauth2, trial, &tryanother);
 
-    if(oauth2.access_token)
+    if(oauth2.access_token){
 	mm_login_method (&mb, user, (void *) &oauth2, trial, stream->auth.name);
+	stream->auth.expiration = oauth2.expiration;
+    }
 
-    stream->auth.expiration = oauth2.expiration;
     oauth2_free_extra_values(oauth2);
 }

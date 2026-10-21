@@ -802,33 +802,55 @@ long imap_status (MAILSTREAM *stream,char *mbx,long flags)
 long imap_renew (MAILSTREAM *stream, MAILSTREAM *m)
 {
   IMAPLOCAL *MLOCAL;
-  NETSTREAM *xnetstream;
+  NETSTREAM *nl;
+  unsigned long i;
+  int resync = 0;
 
   if (!stream || !m || !LOCAL || !m->local) return 1L;
   MLOCAL = (IMAPLOCAL *) m->local;
   if (!MLOCAL->netstream) return 1L;
 
   if (!stream->halfopen) {
-    if (m->uid_validity != stream->uid_validity ||
-        m->nmsgs < stream->nmsgs ||
-        (m->uid_last - stream->uid_last) != (m->nmsgs - stream->nmsgs))
-      return -1L;
-    if (stream->nmsgs > 0 && mail_elt (stream, stream->nmsgs)->private.uid != 0) {
-      if (mail_uid (m, stream->nmsgs) != mail_elt (stream, stream->nmsgs)->private.uid)
-        return -1L;
+    if (m->uid_validity != stream->uid_validity || m->nmsgs < stream->nmsgs)
+      resync = 1;
+    else if (stream->nmsgs > 0) {
+      for (i = stream->nmsgs; i >= 1; i--)
+        if (mail_elt (stream, i)->private.uid != 0) break;
+      if (i >= 1) {
+        unsigned long m_uid = mail_uid (m, i);
+        if (!MLOCAL || !MLOCAL->netstream) return 1L;
+        if (m_uid != mail_elt (stream, i)->private.uid) resync = 1;
+      }
+      else {
+        if ((m->uid_last < stream->uid_last) ||
+            ((m->nmsgs == stream->nmsgs) && (m->uid_last != stream->uid_last)))
+          resync = 1;
+      }
     }
   }
 
-  xnetstream = LOCAL->netstream;
+  nl = LOCAL->netstream;
   LOCAL->netstream = MLOCAL->netstream;
-  MLOCAL->netstream = xnetstream;
+  MLOCAL->netstream = nl;
 
   LOCAL->byeseen = NIL;
   MLOCAL->byeseen = T;
 
+  stream->unhealthy = NIL;
+  stream->uid_validity = m->uid_validity;
   stream->uid_last = m->uid_last;
 
-  if (!stream->halfopen && m->nmsgs > stream->nmsgs) {
+  if (resync) {
+    unsigned int save_silent = stream->silent;
+    stream->silent = T;
+    mail_free_cache (stream);
+    mail_exists (stream, m->nmsgs);
+    mail_recent (stream, m->recent);
+    stream->silent = save_silent;
+    return -1L;
+  }
+
+  if (!stream->halfopen && (m->nmsgs > stream->nmsgs)) {
     mail_exists (stream, m->nmsgs);
     mail_recent (stream, m->recent);
   }

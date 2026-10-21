@@ -1952,6 +1952,7 @@ int PFLUSH (void);
 #define OA2_DEVICE	0x001	/* Client ID obtained by client uses Device Method */
 #define OA2_AUTHORIZE	0x010	/* Client ID obtained by client uses Authorize Method */
 #define OA2_OPENSTREAM	0x100	/* We are opening a stream for the first time */
+#define OA2_NEW_REFRESH_TOKEN 0x200 /* Rotated refresh token received from server */
 
 typedef enum {OA2_Id = 0,
 	      OA2_Secret,

@@ -84,6 +84,7 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
     int           new_mail_was_announced = 0;
     int           have_pinged_non_special = 0;
     int		  timeo;
+    int           reconnected_status = 0;
 
     dprint((9, "new mail called (force=%d %s flags=0x%x)\n",
 	       force_arg,
@@ -133,11 +134,34 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	      dprint((9, "renew_accesstoken: %s: now = %lu, auth = %s, expiration = %lu\n", STREAMNAME(m), now, m->auth.name, m->auth.expiration));
 	      ps_global->noshow_error = 1;	/* make this invisible to the user */
 	      renew_accesstoken(m);
-	      if(skip == 0) {
-		mail_renew_stream(m);
-	      } else if(m->auth.expiration > 0 && now + 180 >= m->auth.expiration) {
-		renew_accesstoken(m);
-		mail_renew_stream(m);
+	      if(skip == 0 || m->auth.expiration == 0 || now + 180 >= m->auth.expiration){
+		long renew_rv;
+		unsigned long cur_uid = 0L;
+
+		if(!sp_dead_stream(m) && is_imap_stream(m))
+		  pine_mail_ping(m);
+
+		if(!m->halfopen && sp_msgmap(m) && mn_get_total(sp_msgmap(m)) > 0L){
+		    long cur_raw = mn_m2raw(sp_msgmap(m), mn_get_cur(sp_msgmap(m)));
+		    if(cur_raw > 0L && (unsigned long) cur_raw <= m->nmsgs
+		       && mail_elt(m, cur_raw) && mail_elt(m, cur_raw)->private.uid != 0)
+		      cur_uid = mail_elt(m, cur_raw)->private.uid;
+		}
+
+		renew_rv = mail_renew_stream(m);
+		if(renew_rv == 0L){
+		    sp_set_last_ping(m, now);
+		    sp_set_last_activity(m, now);
+		}
+		else if(renew_rv == -1L){
+		    pine_resync_stream_after_renew(m, cur_uid);
+		    if(sp_locked(m) && !sp_flagged(m, SP_TEMP) && reconnected_status == 0)
+		      reconnected_status = -1;
+		}
+
+		if(renew_rv > 0L || m->auth.expiration <= now + 180){
+		    m->auth.expiration = now + 60;
+		}
 	      }
 	      ps_global->noshow_error = 0;	/* return to normal status */
 	      dprint((9, "renew_accesstoken: %s: result: expiration = %lu\n", STREAMNAME(m), m->auth.expiration));
@@ -145,7 +169,7 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
     }
 
     if(!ps_global->mail_stream
-       || !(timeo || force || sp_a_locked_stream_changed()))
+       || !(timeo || force || sp_a_locked_stream_changed() || sp_a_locked_stream_is_dead()))
       return(-1);
 
     last_check_point_call = now;
@@ -251,7 +275,8 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	 * only for the current folder. This is usually going to fire
 	 * on the first test, which is the interval the user set.
 	 */
-	if(force_arg
+	if(sp_dead_stream(m)
+	   || force_arg
 	   ||
 	   (timeo
 	    &&
@@ -292,11 +317,21 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 
 	    /*-- Ping the stream to check for new mail --*/
 	    if(sp_dead_stream(m)){
-		dprint((6, "no check: stream is dead\n"));
+		dprint((6, "stream is dead, attempting reconnect\n"));
+		if(is_imap_stream(m)){
+		    int rc = pine_attempt_reconnect(m);
+		    if(rc != 0 && sp_locked(m) && !sp_flagged(m, SP_TEMP))
+		      reconnected_status = rc;
+		}
 	    }
 	    else if(!pine_mail_ping(m)){
 		dprint((6, "ping failed: stream is dead\n"));
 		sp_set_dead_stream(m, 1);
+		if(is_imap_stream(m)){
+		    int rc = pine_attempt_reconnect(m);
+		    if(rc != 0 && sp_locked(m) && !sp_flagged(m, SP_TEMP))
+		      reconnected_status = rc;
+		}
 	    }
 
 	    dprint((7, "Ping complete: %s\n", debug_time(0,1,ps_global->signal_in_progress)));
@@ -411,7 +446,8 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	 * that weren't handled here will no longer be recent next time
 	 * we open the folder.
 	 */
-	if((force_arg && sp_flagged(m, SP_LOCKED))
+	if(sp_dead_stream(m)
+	   || (force_arg && sp_flagged(m, SP_LOCKED))
 	   ||
 	   (timeo
 	    &&
@@ -474,11 +510,21 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 
 	    /*-- Ping the stream to check for new mail --*/
 	    if(sp_dead_stream(m)){
-		dprint((6, "no check: stream is dead\n"));
+		dprint((6, "stream is dead, attempting reconnect\n"));
+		if(is_imap_stream(m)){
+		    int rc = pine_attempt_reconnect(m);
+		    if(rc != 0 && sp_locked(m) && !sp_flagged(m, SP_TEMP) && reconnected_status == 0)
+		      reconnected_status = rc;
+		}
 	    }
 	    else if(!pine_mail_ping(m)){
 		dprint((6, "ping failed: stream is dead\n"));
 		sp_set_dead_stream(m, 1);
+		if(is_imap_stream(m)){
+		    int rc = pine_attempt_reconnect(m);
+		    if(rc != 0 && sp_locked(m) && !sp_flagged(m, SP_TEMP) && reconnected_status == 0)
+		      reconnected_status = rc;
+		}
 	    }
 
 	    dprint((7, "Ping complete: %s\n", debug_time(0,1,ps_global->signal_in_progress)));
@@ -527,7 +573,7 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	    rv += (t_nm_count = sp_new_mail_count(m));
 	    sp_set_new_mail_count(m, 0L);
 
-	    if((flags & NM_STATUS_MSG) && pith_opt_newmail_announce){
+	    if((flags & NM_STATUS_MSG) && pith_opt_newmail_announce && reconnected_status == 0){
 		for(n = m->nmsgs; n > 1L; n--)
 		  if(!get_lflag(m, NULL, n, MN_EXLD))
 		    break;
@@ -619,6 +665,11 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
      */
     if(force_arg)
       ps_global->last_nextitem_forcechk = time(0);
+
+    if(reconnected_status == 1)
+      q_status_message(SM_ORDER, 0, 2, _("Folder connection restored."));
+    else if(reconnected_status == -1)
+      q_status_message(SM_ORDER, 0, 2, _("Folder reconnected and synchronized."));
 
     dprint((6, "******** new mail returning %ld  ********\n", 
 	       rv ? rv : (exp_count ? 0 : -1)));

@@ -55,6 +55,7 @@ void	mcp_set_lock(int);
 int	mcp_aimon_enabled(void);
 void	mcp_set_aimon_enabled(int);
 int	mcp_aimon_target(char *, size_t, int *);
+int	mcp_set_aimon_target(const char *host, int port, char *err, size_t errlen);
 int	mcp_allow_count(void);
 int	mcp_recipient_allowed(char *);
 int	mcp_allow_entry_valid(char *);

@@ -542,14 +542,15 @@ struct key_menu {
 #define	OE_CANCEL_KEY		1
 #define	OE_CTRL_T_KEY		2
 #define	OE_ENTER_KEY		3
-#define SETUP_PRINTER		3
-#define SETUP_PASSWD		4
-#define SETUP_CONFIG		5
-#define SETUP_SIG		6
-#define SETUP_DIRECTORY		10
+#define SETUP_MONITOR		3
+#define SETUP_PRINTER		4
+#define SETUP_PASSWD		5
+#define SETUP_CONFIG		6
+#define SETUP_SIG		7
+#define SETUP_DIRECTORY		11
 #define SETUP_EXCEPT		14
 #define SETUP_SMIME		16
-#define SETUP_MONITOR		20
+#define SETUP_KOLOR		20
 #define MAIN_HELP_KEY		0
 #define MAIN_DEFAULT_KEY	3
 #define MAIN_KBLOCK_KEY		9
@@ -608,6 +609,7 @@ extern struct key_menu	cancel_keymenu,
 			oe_keymenu,
 			choose_setup_keymenu,
 			mcp_monitor_keymenu,
+			mcp_config_keymenu,
 			main_keymenu,
 			simple_file_keymenu,
 			nuov_keymenu,

@@ -36,6 +36,11 @@
 #include "../pith/sequence.h"
 #include "../pith/options.h"
 #include "../pith/mimedesc.h"
+#include "../pith/icache.h"
+#include "../pith/mailindx.h"
+#include "../pith/sort.h"
+
+#define mn_msg2raw(m, n) mn_raw2m(m, n)
 
 
 void     (*pith_opt_closing_stream)(MAILSTREAM *);
@@ -1402,6 +1407,8 @@ long
 pine_mail_search_full(MAILSTREAM *stream, char *charset,
 		      SEARCHPGM *pgm, long int flags)
 {
+    long ret;
+
     /*
      * The charset should either be UTF-8 or NULL for alpine.
      * If it is UTF-8 we may be able to change it to NULL if
@@ -1416,7 +1423,23 @@ pine_mail_search_full(MAILSTREAM *stream, char *charset,
     if(F_ON(F_NNTP_SEARCH_USES_OVERVIEW, ps_global))
       flags |= SO_OVERVIEW;
 
-    return(stream ? mail_search_full(stream, charset, pgm, flags) : NIL);
+    if(!stream)
+      return NIL;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+    }
+
+    ret = mail_search_full(stream, charset, pgm, flags);
+    if((!ret || sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	int rc = pine_attempt_reconnect(stream);
+	if(rc == 1)
+	  ret = mail_search_full(stream, charset, pgm, flags);
+    }
+
+    return ret;
 }
 
 
@@ -1502,8 +1525,22 @@ hibit_in_sizedtext(SIZEDTEXT *st)
 void
 pine_mail_fetch_flags(MAILSTREAM *stream, char *sequence, long int flags)
 {
+    if(!stream)
+      return;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+    }
+
     ps_global->dont_count_flagchanges = 1;
     mail_fetch_flags(stream, sequence, flags);
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	int rc = pine_attempt_reconnect(stream);
+	if(rc == 1)
+	  mail_fetch_flags(stream, sequence, flags);
+    }
     ps_global->dont_count_flagchanges = 0;
 }
 
@@ -1513,9 +1550,24 @@ pine_mail_fetchenvelope(MAILSTREAM *stream, long unsigned int msgno)
 {
     ENVELOPE *env = NULL;
 
+    if(!stream)
+      return NULL;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+    }
+
     ps_global->dont_count_flagchanges = 1;
-    if(stream && msgno > 0L && msgno <= stream->nmsgs)
+    if(msgno > 0L && msgno <= stream->nmsgs)
       env = mail_fetchenvelope(stream, msgno);
+
+    if((!env || sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	int rc = pine_attempt_reconnect(stream);
+	if(rc == 1 && msgno > 0L && msgno <= stream->nmsgs)
+	  env = mail_fetchenvelope(stream, msgno);
+    }
 
     ps_global->dont_count_flagchanges = 0;
     return(env);
@@ -1528,9 +1580,24 @@ pine_mail_fetch_structure(MAILSTREAM *stream, long unsigned int msgno,
 {
     ENVELOPE *env = NULL;
 
+    if(!stream)
+      return NULL;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+    }
+
     ps_global->dont_count_flagchanges = 1;
-    if(stream && (flags & FT_UID || (msgno > 0L && msgno <= stream->nmsgs)))
+    if(flags & FT_UID || (msgno > 0L && msgno <= stream->nmsgs))
       env = mail_fetch_structure(stream, msgno, body, flags);
+
+    if((!env || sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	int rc = pine_attempt_reconnect(stream);
+	if(rc == 1 && (flags & FT_UID || (msgno > 0L && msgno <= stream->nmsgs)))
+	  env = mail_fetch_structure(stream, msgno, body, flags);
+    }
 
     ps_global->dont_count_flagchanges = 0;
     return(env);
@@ -1542,9 +1609,24 @@ pine_mail_fetchstructure(MAILSTREAM *stream, long unsigned int msgno, struct mai
 {
     ENVELOPE *env = NULL;
 
+    if(!stream)
+      return NULL;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+    }
+
     ps_global->dont_count_flagchanges = 1;
-    if(stream && msgno > 0L && msgno <= stream->nmsgs)
+    if(msgno > 0L && msgno <= stream->nmsgs)
       env = mail_fetchstructure(stream, msgno, body);
+
+    if((!env || sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	int rc = pine_attempt_reconnect(stream);
+	if(rc == 1 && msgno > 0L && msgno <= stream->nmsgs)
+	  env = mail_fetchstructure(stream, msgno, body);
+    }
 
     ps_global->dont_count_flagchanges = 0;
     return(env);
@@ -1560,13 +1642,39 @@ char *
 pine_mail_fetch_body(MAILSTREAM *stream, long unsigned int msgno, char *section,
 		     long unsigned int *len, long int flags)
 {
+    char *ret = NULL;
+
+    if(!stream)
+      return NULL;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+    }
+
 #ifdef _WINDOWS
     if(F_ON(F_QUELL_SSL_LARGEBLOCKS, ps_global))
-      return(pine_mail_partial_fetch_wrapper(stream, msgno, 
-			     section, len, flags, 0, NULL, 0));
+      ret = pine_mail_partial_fetch_wrapper(stream, msgno, 
+			     section, len, flags, 0, NULL, 0);
     else
 #endif
-    return(mail_fetch_body(stream, msgno, section, len, flags));
+    ret = mail_fetch_body(stream, msgno, section, len, flags);
+
+    if((!ret || sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	int rc = pine_attempt_reconnect(stream);
+	if(rc == 1){
+#ifdef _WINDOWS
+	    if(F_ON(F_QUELL_SSL_LARGEBLOCKS, ps_global))
+	      ret = pine_mail_partial_fetch_wrapper(stream, msgno, 
+				     section, len, flags, 0, NULL, 0);
+	    else
+#endif
+	    ret = mail_fetch_body(stream, msgno, section, len, flags);
+	}
+    }
+
+    return ret;
 }
 
 /*
@@ -1578,14 +1686,41 @@ char *
 pine_mail_fetch_text(MAILSTREAM *stream, long unsigned int msgno, char *section,
 		     long unsigned int *len, long int flags)
 {
+    char *ret = NULL;
+
+    if(!stream)
+      return NULL;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+    }
+
 #ifdef _WINDOWS
     if(F_ON(F_QUELL_SSL_LARGEBLOCKS, ps_global))
-      return(pine_mail_partial_fetch_wrapper(stream, msgno,
+      ret = pine_mail_partial_fetch_wrapper(stream, msgno,
 					     section, len, flags, 
-					     0, NULL, 1));
+					     0, NULL, 1);
     else
 #endif
-      return(mail_fetch_text(stream, msgno, section, len, flags));
+      ret = mail_fetch_text(stream, msgno, section, len, flags);
+
+    if((!ret || sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	int rc = pine_attempt_reconnect(stream);
+	if(rc == 1){
+#ifdef _WINDOWS
+	    if(F_ON(F_QUELL_SSL_LARGEBLOCKS, ps_global))
+	      ret = pine_mail_partial_fetch_wrapper(stream, msgno, 
+						     section, len, flags, 
+						     0, NULL, 1);
+	    else
+#endif
+	      ret = mail_fetch_text(stream, msgno, section, len, flags);
+	}
+    }
+
+    return ret;
 }
 
 
@@ -1807,8 +1942,24 @@ pine_mail_ping(MAILSTREAM *stream)
 void
 pine_mail_check(MAILSTREAM *stream)
 {
-    reset_check_point(stream);
+    if(!stream)
+      return;
+
+    if((sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	sp_set_dead_stream(stream, 1);
+	pine_attempt_reconnect(stream);
+	if(sp_dead_stream(stream))
+	  return;
+    }
+
     mail_check(stream);
+
+    if(!sp_dead_stream(stream) && !stream->unhealthy)
+      reset_check_point(stream);
+    else if(is_imap_stream(stream)){
+      sp_set_dead_stream(stream, 1);
+      pine_attempt_reconnect(stream);
+    }
 }
 
 
@@ -2570,11 +2721,16 @@ sp_stream_get(char *mailbox, long unsigned int flags)
     if(flags & SP_MATCH){
 	for(i = 0; i < ps_global->s_pool.nstream; i++){
 	    m = ps_global->s_pool.streams[i];
+	    if(m && sp_dead_stream(m) && is_imap_stream(m)
+	       && same_remote_mailboxes(mailbox, m->original_mailbox ? m->original_mailbox : m->mailbox)){
+		pine_attempt_reconnect(m);
+	    }
 	    if(m && sp_flagged(m, SP_USEPOOL)
 	       && (!m->rdonly || (flags & SP_RO_OK)) && !sp_dead_stream(m)
 	       && same_stream_and_mailbox(mailbox, m)){
 		if((sp_flagged(m, SP_LOCKED) && recent_activity(m))
-		   || pine_mail_ping(m)){
+		   || pine_mail_ping(m)
+		   || (is_imap_stream(m) && pine_attempt_reconnect(m) != 0)){
 		    dprint((7,
 		       "sp_stream_get: found exact match, slot %d\n", i));
 		    if(!sp_flagged(m, SP_LOCKED)){
@@ -2612,7 +2768,8 @@ sp_stream_get(char *mailbox, long unsigned int flags)
 		   && sp_flagged(m, SP_LOCKED) && !sp_dead_stream(m)
 		   && same_stream(mailbox, m)
 		   && !same_stream_and_mailbox(mailbox, m)){
-		    if(recent_activity(m) || pine_mail_ping(m)){
+		    if(recent_activity(m) || pine_mail_ping(m)
+		       || (is_imap_stream(m) && pine_attempt_reconnect(m) != 0)){
 			dprint((7,
 			    "sp_stream_get: found SAME match, slot %d\n", i));
 			return(m);
@@ -2630,7 +2787,8 @@ sp_stream_get(char *mailbox, long unsigned int flags)
 		   && same_stream(mailbox, m)
 		   && !same_stream_and_mailbox(mailbox, m)){
 		    /* always ping unlocked streams */
-		    if(pine_mail_ping(m)){
+		    if(pine_mail_ping(m)
+		       || (is_imap_stream(m) && pine_attempt_reconnect(m) != 0)){
 			dprint((7,
 			    "sp_stream_get: found SAME match, slot %d\n", i));
 			dprint((7,
@@ -2658,7 +2816,8 @@ sp_stream_get(char *mailbox, long unsigned int flags)
 	       && !sp_flagged(m, SP_LOCKED) && !sp_dead_stream(m)
 	       && same_stream(mailbox, m)
 	       && !same_stream_and_mailbox(mailbox, m)){
-		if(pine_mail_ping(m)){
+		if(pine_mail_ping(m)
+		   || (is_imap_stream(m) && pine_attempt_reconnect(m) != 0)){
 		    dprint((7,
 		      "sp_stream_get: found SAME/TEMPUSE match, slot %d\n", i));
 		    dprint((7,
@@ -2691,7 +2850,8 @@ sp_stream_get(char *mailbox, long unsigned int flags)
 		   && !sp_flagged(m, SP_LOCKED) && !sp_dead_stream(m)
 		   && same_stream(mailbox, m)
 		   && !same_stream_and_mailbox(mailbox, m)){
-		    if(pine_mail_ping(m)){
+		    if(pine_mail_ping(m)
+		       || (is_imap_stream(m) && pine_attempt_reconnect(m) != 0)){
 			dprint((7,
 		    "sp_stream_get: found SAME/UNLOCKED match, slot %d\n", i));
 			dprint((7,
@@ -3020,6 +3180,59 @@ sp_msgmap(MAILSTREAM *stream)
 
 
 void
+sp_set_msgmap(MAILSTREAM *stream, MSGNO_S *msgmap)
+{
+    PER_STREAM_S **pss;
+
+    pss = sp_data(stream);
+    if(pss && *pss)
+      (*pss)->msgmap = msgmap;
+}
+
+
+time_t
+sp_last_reconnect_time(MAILSTREAM *stream)
+{
+    PER_STREAM_S **pss;
+
+    pss = sp_data(stream);
+    return((pss && *pss) ? (*pss)->last_reconnect_time : (time_t) 0);
+}
+
+
+void
+sp_set_last_reconnect_time(MAILSTREAM *stream, time_t val)
+{
+    PER_STREAM_S **pss;
+
+    pss = sp_data(stream);
+    if(pss && *pss)
+      (*pss)->last_reconnect_time = val;
+}
+
+
+int
+sp_reconnect_failures(MAILSTREAM *stream)
+{
+    PER_STREAM_S **pss;
+
+    pss = sp_data(stream);
+    return((pss && *pss) ? (*pss)->reconnect_failures : 0);
+}
+
+
+void
+sp_set_reconnect_failures(MAILSTREAM *stream, int val)
+{
+    PER_STREAM_S **pss;
+
+    pss = sp_data(stream);
+    if(pss && *pss)
+      (*pss)->reconnect_failures = val;
+}
+
+
+void
 sp_free_callback(void **sparep)
 {
     PER_STREAM_S **pss;
@@ -3252,44 +3465,106 @@ modern_imap_stream(MAILSTREAM *stream)
 
 
 /*----------------------------------------------------------------------
+    In-place Tier-2 resynchronization of a renewed stream
+ ----*/
+void
+pine_resync_stream_after_renew(MAILSTREAM *stream, unsigned long cur_uid)
+{
+    MSGNO_S *mm;
+
+    if(!stream)
+      return;
+
+    sp_set_dead_stream(stream, 0);
+    sp_set_noticed_dead_stream(stream, 0);
+    sp_set_io_error_on_stream(stream, 0);
+    sp_set_expunge_count(stream, 0L);
+    sp_set_new_mail_count(stream, 0L);
+    sp_set_mail_box_changed(stream, 0);
+    sp_set_first_unseen(stream, 0L);
+    sp_set_unsorted_newmail(stream, 0);
+    sp_set_need_to_rethread(stream, 0);
+    reset_check_point(stream);
+
+    mm = sp_msgmap(stream);
+    if(mm){
+        SortOrder old_sort = mn_get_sort(mm);
+        int       old_rev  = mn_get_revsort(mm);
+
+        msgno_init(&mm, stream->nmsgs, old_sort, old_rev);
+        sp_set_msgmap(stream, mm);
+    }
+
+    clear_index_cache(stream, 0);
+    if(ps_global && stream == ps_global->mail_stream)
+      reset_index_format();
+    set_need_format_setup(stream);
+
+    if(mm && stream->nmsgs > 0L)
+      refresh_sort(stream, mm, SRT_NON);
+
+    if(mm && cur_uid > 0L && stream->nmsgs > 0L){
+        unsigned long new_msgno = mail_msgno(stream, cur_uid);
+        if(new_msgno > 0L){
+            long raw = mn_raw2m(mm, (long) new_msgno);
+            if(raw > 0L)
+              mn_set_cur(mm, raw);
+        }
+    }
+
+    if(ps_global)
+      ps_global->mangled_screen = 1;
+}
+
+
+/*----------------------------------------------------------------------
     Attempt to reconnect a dead stream
 
   Returns: 1 if healed in-place
-          -1 if mailbox changed/expunged, full reopen required
+          -1 if mailbox changed/expunged, full resync performed in-place
            0 if reconnect failed or rate-limited
  ----*/
 int
 pine_attempt_reconnect(MAILSTREAM *stream)
 {
-    static time_t last_fail_time = 0;
-    static int consec_failures = 0;
-    static MAILSTREAM *last_fail_stream = NULL;
     time_t now;
     int save_noshow_error, save_noshow_warn;
+    int failures;
     long rv;
+    unsigned long cur_uid = 0L;
 
-    if(!stream || !sp_dead_stream(stream) || !is_imap_stream(stream) || stream->lock)
+    if(!stream || (!sp_dead_stream(stream) && !stream->unhealthy) || !is_imap_stream(stream) || stream->lock)
       return 0;
+
+    if(stream->unhealthy)
+      sp_set_dead_stream(stream, 1);
 
     now = time(0);
 
-    if(stream != last_fail_stream){
-	consec_failures = 0;
-	last_fail_time = 0;
-	last_fail_stream = NULL;
+    failures = sp_reconnect_failures(stream);
+    if(failures > 0){
+        time_t last_fail = sp_last_reconnect_time(stream);
+        int shift = (failures > 4) ? 4 : (failures - 1);
+        time_t backoff = 5L << shift;
+        if(backoff > 60L)
+          backoff = 60L;
+        if((now - last_fail) < backoff)
+          return 0;
     }
 
-    if(consec_failures > 0){
-	if(consec_failures >= 2 && (now - last_fail_time) < 30)
-	  return 0;
-	if(consec_failures == 1 && (now - last_fail_time) < 5)
-	  return 0;
+    if(!stream->halfopen && sp_msgmap(stream) && mn_get_total(sp_msgmap(stream)) > 0L){
+        long cur_raw = mn_m2raw(sp_msgmap(stream), mn_get_cur(sp_msgmap(stream)));
+        if(cur_raw > 0L && (unsigned long) cur_raw <= stream->nmsgs
+           && mail_elt(stream, cur_raw) && mail_elt(stream, cur_raw)->private.uid != 0)
+          cur_uid = mail_elt(stream, cur_raw)->private.uid;
     }
 
-    save_noshow_error = ps_global->noshow_error;
-    save_noshow_warn = ps_global->noshow_warn;
-    ps_global->noshow_error = 1;
-    ps_global->noshow_warn = 1;
+    save_noshow_error = ps_global ? ps_global->noshow_error : 0;
+    save_noshow_warn = ps_global ? ps_global->noshow_warn : 0;
+    if(ps_global){
+        ps_global->noshow_error = 1;
+        ps_global->noshow_warn = 1;
+    }
 
     if(stream->auth.name
        && (!strucmp(stream->auth.name, OA2NAME) || !strucmp(stream->auth.name, BEARERNAME))
@@ -3299,31 +3574,37 @@ pine_attempt_reconnect(MAILSTREAM *stream)
 
     rv = mail_renew_stream(stream);
 
-    ps_global->noshow_error = save_noshow_error;
-    ps_global->noshow_warn = save_noshow_warn;
-
-    if(rv == 0L){
-	sp_set_dead_stream(stream, 0);
-	sp_set_noticed_dead_stream(stream, 0);
-	sp_set_io_error_on_stream(stream, 0);
-	sp_set_last_ping(stream, time(0));
-	sp_set_last_activity(stream, time(0));
-	consec_failures = 0;
-	last_fail_time = 0;
-	last_fail_stream = NULL;
-	return 1;
+    if(ps_global){
+        ps_global->noshow_error = save_noshow_error;
+        ps_global->noshow_warn = save_noshow_warn;
     }
-    else if(rv == -1L){
-	consec_failures = 0;
-	last_fail_time = 0;
-	last_fail_stream = NULL;
-	return -1;
+
+    if(rv <= 0L){
+        sp_set_reconnect_failures(stream, 0);
+        sp_set_last_reconnect_time(stream, (time_t) 0);
+
+        if(stream->auth.name
+           && (!strucmp(stream->auth.name, OA2NAME) || !strucmp(stream->auth.name, BEARERNAME))
+           && stream->auth.expiration == 0)
+          renew_accesstoken(stream);
+
+        if(rv == 0L){
+            sp_set_dead_stream(stream, 0);
+            sp_set_noticed_dead_stream(stream, 0);
+            sp_set_io_error_on_stream(stream, 0);
+            sp_set_last_ping(stream, time(0));
+            sp_set_last_activity(stream, time(0));
+            return 1;
+        }
+        else{ /* rv == -1L */
+            pine_resync_stream_after_renew(stream, cur_uid);
+            return -1;
+        }
     }
     else{
-	last_fail_stream = stream;
-	last_fail_time = time(0);
-	consec_failures++;
-	return 0;
+        sp_set_reconnect_failures(stream, failures + 1);
+        sp_set_last_reconnect_time(stream, time(0));
+        return 0;
     }
 }
 
@@ -3346,6 +3627,19 @@ streams_died(void)
 
     for(i = 0; i < ps_global->s_pool.nstream; i++){
 	m = ps_global->s_pool.streams[i];
+	if(m && sp_dead_stream(m) && is_imap_stream(m)){
+	    int rc = pine_attempt_reconnect(m);
+	    if(rc != 0){
+		if(sp_locked(m) && !sp_flagged(m, SP_TEMP)){
+		    if(rc == 1)
+		      q_status_message(SM_ORDER, 0, 2, _("Folder connection restored."));
+		    else if(rc == -1)
+		      q_status_message(SM_ORDER, 0, 2, _("Folder reconnected and synchronized."));
+		}
+		continue;
+	    }
+	}
+
 	if(m && sp_dead_stream(m)){
 	    if(sp_flagged(m, SP_LOCKED) && sp_flagged(m, SP_USERFLDR)){
 		if(!sp_noticed_dead_stream(m)){

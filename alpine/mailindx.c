@@ -400,42 +400,18 @@ index_lister(struct pine *state, CONTEXT_S *cntxt, char *folder, MAILSTREAM *str
 	    old_day = nnow.day;
 	}
 
-	if(state->mail_stream && sp_dead_stream(state->mail_stream)
-	   && is_imap_stream(state->mail_stream)
-	   && state->cur_folder && *state->cur_folder){
-	    int rc = pine_attempt_reconnect(state->mail_stream);
+	if(stream && sp_dead_stream(stream)
+	   && stream->dtb && stream->dtb->name
+	   && !strcmp(stream->dtb->name, "imap")){
+	    int rc = pine_attempt_reconnect(stream);
 	    if(rc == 1){
 		state->mangled_header = 1;
 		state->mangled_footer = 1;
-		q_status_message(SM_INFO, 0, 2, _("Folder connection restored."));
+		q_status_message(SM_ORDER, 0, 2, _("Folder connection restored."));
 	    }
 	    else if(rc == -1){
-		char saved_folder[MAILTMPLEN];
-		long cur_m = mn_get_cur(msgmap);
-		long rawno = (cur_m > 0) ? mn_m2raw(msgmap, cur_m) : 0L;
-		imapuid_t cur_uid = 0;
-
-		if(rawno >= 1L && rawno <= state->mail_stream->nmsgs
-		   && mail_elt(state->mail_stream, rawno))
-		  cur_uid = mail_elt(state->mail_stream, rawno)->private.uid;
-
-		strncpy(saved_folder, state->cur_folder, sizeof(saved_folder) - 1);
-		saved_folder[sizeof(saved_folder) - 1] = '\0';
-
-		if(do_broach_folder(saved_folder, state->context_current, NULL, DB_NOVISIT) > 0){
-		    id.stream = stream = state->mail_stream;
-		    id.msgmap = msgmap = state->msgmap;
-		    if(cur_uid > 0 && stream && stream->nmsgs > 0){
-			unsigned long new_raw = mail_msgno(stream, cur_uid);
-			if(new_raw >= 1UL && new_raw <= (unsigned long) stream->nmsgs)
-			  mn_set_cur(msgmap, mn_raw2m(msgmap, (long) new_raw));
-		    }
-		    clear_index_cache(stream, 0);
-		    set_need_format_setup(stream);
-		    state->mangled_screen = 1;
-		    free_message_queue();
-		    q_status_message(SM_INFO, 0, 2, _("Folder reconnected and synchronized."));
-		}
+		state->mangled_screen = 1;
+		q_status_message(SM_ORDER, 0, 2, _("Folder reconnected and synchronized."));
 	    }
 	}
 

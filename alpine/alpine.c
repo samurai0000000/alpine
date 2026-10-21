@@ -2528,6 +2528,21 @@ setup_menu(struct pine *ps)
     so_puts(store, _("(E) Exit Setup:\n"));
     so_puts(store, _("    This puts you back at the Main Menu.\n"));
 
+    if(mcp_enabled()){
+	so_puts(store, "\n");
+	if(pico_usingcolor())
+	  so_puts(store, color_embed("cyan", NULL));
+
+	so_puts(store, _("(I) monItor:\n"));
+	if(pico_usingcolor())
+	  so_puts(store, color_embed(ps_global->VAR_NORM_FORE_COLOR,
+				     ps_global->VAR_NORM_BACK_COLOR));
+
+	so_puts(store, _("    Shows the state of the MCP mail interface: the operator lock, the\n"));
+	so_puts(store, _("    recipient allow-list and the aimon connection. From there you can\n"));
+	so_puts(store, _("    lock or unlock tool calls and edit the allow-list.\n"));
+    }
+
     if(exc){
 	so_puts(store, "\n");
 	so_puts(store, _("(X) eXceptions:\n"));
@@ -2612,13 +2627,6 @@ setup_menu(struct pine *ps)
     so_puts(store, _("    Set client-id and client-secret to use the XOAUTH2\n"));
     so_puts(store, _("    authenticator.\n"));
 
-    if(mcp_enabled()){
-	so_puts(store, "\n");
-	so_puts(store, _("(I) monItor:\n"));
-	so_puts(store, _("    Shows the state of the MCP mail interface: the operator lock, the\n"));
-	so_puts(store, _("    recipient allow-list and the aimon connection. From there you can\n"));
-	so_puts(store, _("    lock or unlock tool calls and edit the allow-list.\n"));
-    }
 
     so_puts(store, "\n");
     so_puts(store, _("(Z) RemoteConfigSetup:\n"));
@@ -2684,6 +2692,11 @@ setup_menu(struct pine *ps)
     if(!smime)
       clrbitn(SETUP_SMIME, sargs.keys.bitmap);
 
+    if(!pico_usingcolor()){
+      clrbitn(SETUP_KOLOR, sargs.keys.bitmap);
+      menu_clear_binding(sargs.keys.menu, 'k');
+    }
+
     if(exc)
       menu_init_binding(sargs.keys.menu, 'x', MC_EXCEPT, "X",
 			N_("eXceptions"), SETUP_EXCEPT);
@@ -2695,6 +2708,10 @@ setup_menu(struct pine *ps)
     if(mcp_enabled())
       menu_init_binding(sargs.keys.menu, 'i', MC_MONITOR, "I",
 			N_("monItor"), SETUP_MONITOR);
+    else{
+      clrbitn(SETUP_MONITOR, sargs.keys.bitmap);
+      menu_clear_binding(sargs.keys.menu, 'i');
+    }
 
     scrolltool(&sargs);
 

@@ -59,6 +59,7 @@ static void    mcp_conf_clear(MCP_CONFIG_S *);
 static int     mcp_conf_parse(MCP_CONFIG_S *, cJSON *);
 static char   *mcp_allow_normalize(const char *);
 static int     mcp_domain_valid(const char *);
+static int     valid_host(const char *);
 static int     mcp_local_valid(const char *, size_t);
 static char  **mcp_list_dup(char **);
 static int     mcp_write_all(int, const char *, size_t);
@@ -149,6 +150,27 @@ mcp_list_dup(char **list)
       }
 
     return(d);
+}
+
+
+/*
+ * Host name: 1..255 characters, no ASCII control or whitespace (<= 0x20),
+ * no DEL or high-byte characters (>= 0x7f).
+ */
+static int
+valid_host(const char *h)
+{
+    const unsigned char *p;
+
+    if(h == NULL || *h == '\0' || strlen(h) > 255)
+      return(0);
+
+    for(p = (const unsigned char *) h; *p; p++){
+	if(*p <= ' ' || *p >= 0x7f)
+	  return(0);
+    }
+
+    return(1);
 }
 
 
@@ -369,7 +391,7 @@ mcp_conf_parse(MCP_CONFIG_S *c, cJSON *root)
 	    const char *h;
 
 	    if(!cJSON_IsString(item) || (h = item->valuestring) == NULL
-	       || *h == '\0' || strlen(h) > 255 || strpbrk(h, " \t\r\n")){
+	       || !valid_host(h)){
 		mcp_conf_set_error(c, "\"aimon.host\" is not a host name");
 		return(-1);
 	    }
@@ -759,6 +781,53 @@ mcp_aimon_target(char *host, size_t hostlen, int *port)
 
     pthread_mutex_unlock(&mcp_conf_mutex);
     return(rv);
+}
+
+
+/*
+ * Set the aimon gateway host and port in memory. Validates that host
+ * is non-empty, <= 255 characters, and free of whitespace/control characters,
+ * and that port is between 1 and 65535. Returns 0 on success, or -1 with
+ * err populated on failure. Previous target is preserved on error.
+ */
+int
+mcp_set_aimon_target(const char *host, int port, char *err, size_t errlen)
+{
+    char *copy;
+
+    if(!valid_host(host)){
+	if(err && errlen > 0)
+	  snprintf(err, errlen, "invalid host: %.60s", host ? host : "(null)");
+
+	return(-1);
+    }
+
+    if(port < 1 || port > 65535){
+	if(err && errlen > 0)
+	  snprintf(err, errlen, "port %d out of range (1-65535)", port);
+
+	return(-1);
+    }
+
+    if((copy = mcp_strdup(host)) == NULL){
+	if(err && errlen > 0)
+	  snprintf(err, errlen, "out of memory");
+
+	return(-1);
+    }
+
+    pthread_mutex_lock(&mcp_conf_mutex);
+    if(mcp_conf.aimon_host)
+      free(mcp_conf.aimon_host);
+
+    mcp_conf.aimon_host = copy;
+    mcp_conf.aimon_port = port;
+    pthread_mutex_unlock(&mcp_conf_mutex);
+
+    if(err && errlen > 0)
+      err[0] = '\0';
+
+    return(0);
 }
 
 

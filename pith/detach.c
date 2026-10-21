@@ -635,7 +635,7 @@ fetch_readc_init(FETCH_READC_S *frd, MAILSTREAM *stream, long int msgno,
 	}
     }
     else{				/* fetch the whole bloody thing here */
-	frd->chunk = mail_fetch_body(stream, msgno, section, &frd->read, flags);
+	frd->chunk = pine_mail_fetch_body(stream, msgno, section, &frd->read, flags);
 
 	/* This only happens if the server gave us a bogus size */
 	if(partial > 0L && partial < size){

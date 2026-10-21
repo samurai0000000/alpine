@@ -463,7 +463,7 @@ display_message(UCS command)
     if((q = top_of_queue()) != NULL && q->shown){
 	int rv = -1;
 
-	if(command == ctrl('L')){	/* just repaint it, and go on */
+	if(command == ctrl('L') && is_last_message(q)){	/* just repaint it, and go on */
 	    mark_status_unknown();
 	    mark_keymenu_dirty();
 	    mark_titlebar_dirty();

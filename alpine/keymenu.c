@@ -978,7 +978,8 @@ INST_KEY_MENU(oe_keymenu, oe_keys);
 struct key choose_setup_keys[] =
        {HELP_MENU,
 	OTHER_MENU,
-	{"E",N_("Exit Setup"),{MC_EXIT,2,{'e',ctrl('C')}},KS_EXITMODE},
+	EXIT_SETUP_MENU,
+	{"I",N_("monItor"),{MC_MONITOR,1,{'i'}},KS_NONE},
 	{"P",N_("Printer"),{MC_PRINTER,1,{'p'}},KS_NONE},
 	/* TRANSLATORS: Change password */
 	{"N",N_("Newpassword"),{MC_PASSWD,1,{'n'}},KS_NONE},
@@ -994,12 +995,10 @@ struct key choose_setup_keys[] =
 	{"R",N_("Rules"),{MC_RULES,1,{'r'}},KS_NONE},
 	/* TRANSLATORS: configure directory servers */
 	{"D",N_("Directory"),{MC_DIRECTORY,1,{'d'}},KS_NONE},
-	/* TRANSLATORS: configure color */
-	{"K",N_("Kolor"),{MC_KOLOR,1,{'k'}},KS_NONE},
 
 	HELP_MENU,
 	OTHER_MENU,
-	NULL_MENU,
+	{"X",N_("eXceptions"),{MC_EXCEPT,1,{'x'}},KS_NONE},
 	/* TRANSLATORS: remote configuration setup */
 	{"Z",N_("RemoteConfigSetup"),{MC_REMOTE,1,{'z'}},KS_NONE},
 	/* TRANSLATORS: configure S/MIME */
@@ -1007,7 +1006,8 @@ struct key choose_setup_keys[] =
 	{"U",N_("xoaUth2"),{MC_XOAUTH2,1,{'u'}},KS_NONE},
 	PREVPAGE_MENU,
 	NEXTPAGE_MENU,
-	NULL_MENU,
+	/* TRANSLATORS: configure color */
+	{"K",N_("Kolor"),{MC_KOLOR,1,{'k'}},KS_NONE},
 	NULL_MENU,
 	HOMEKEY_MENU,
 	ENDKEY_MENU};
@@ -1035,6 +1035,41 @@ struct key mcp_monitor_keys[] =
 	NULL_MENU,
 	NULL_MENU};
 INST_KEY_MENU(mcp_monitor_keymenu, mcp_monitor_keys);
+
+
+/* Interactive MCP configuration and status keymenu */
+struct key mcp_config_keys[] =
+       {HELP_MENU,
+	OTHER_MENU,
+	{"E",N_("Exit / Save"),{MC_EXIT,2,{'e',ctrl('C')}},KS_EXITMODE},
+	/* TRANSLATORS: reconnect to aimon */
+	{"R",N_("Reconnect"),{MC_MON_RECONN,1,{'r'}},KS_NONE},
+	/* TRANSLATORS: remove a pending idempotency record */
+	{"P",N_("Pending"),{MC_MON_PENDING,1,{'p'}},KS_NONE},
+	{"N",N_("Next"),{MC_NEXTITEM,2,{'n','\t'}},KS_NONE},
+	PREVPAGE_MENU,
+	NEXTPAGE_MENU,
+	{"X","[" N_("Toggle") "]",{MC_TOGGLE,3,{'x',ctrl('M'),ctrl('J')}},KS_NONE},
+	{"C","[" N_("Change") "]",{MC_EDIT,1,{'c'}},KS_NONE},
+	{"A",N_("Add Recipient"),{MC_ADD,1,{'a'}},KS_NONE},
+	{"D",N_("Del Recipient"),{MC_DELETE,2,{'d',KEY_DEL}},KS_NONE},
+
+	HELP_MENU,
+	OTHER_MENU,
+	/* TRANSLATORS: refuse every request from MCP clients */
+	{"L",N_("Lock"),{MC_MON_LOCK,1,{'l'}},KS_NONE},
+	/* TRANSLATORS: allow requests from MCP clients again */
+	{"U",N_("Unlock"),{MC_MON_UNLOCK,1,{'u'}},KS_NONE},
+	/* TRANSLATORS: edit the list of addresses MCP clients may mail */
+	{"W",N_("Whitelist"),{MC_MON_ALLOW,1,{'w'}},KS_NONE},
+	NULL_MENU,
+	PREVPAGE_MENU,
+	NEXTPAGE_MENU,
+	HOMEKEY_MENU,
+	ENDKEY_MENU,
+	NULL_MENU,
+	NULL_MENU};
+INST_KEY_MENU(mcp_config_keymenu, mcp_config_keys);
 
 
 struct key main_keys[] =
@@ -3090,6 +3125,10 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
         for(c = 0, el = off+i, k = &km->keys[el];
 	    k < &km->keys[off+12] && c < max_column;
 	    k += 2, el += 2){
+	    COLOR_PAIR *kn_col = name_color;
+	    COLOR_PAIR *kl_col = label_color;
+	    COLOR_PAIR *custom_kn = NULL;
+	    COLOR_PAIR *custom_kl = NULL;
 
             if(k->column > max_column)
               break;
@@ -3097,6 +3136,15 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 	    j++;
             if(ufk)
               fkey = 1 + k - &km->keys[off];
+
+	    if(pico_usingcolor() && k->bind.cmd == MC_MONITOR){
+		custom_kn = new_color_pair("black", "cyan");
+		custom_kl = new_color_pair("cyan", "black");
+		if(custom_kn)
+		  kn_col = custom_kn;
+		if(custom_kl)
+		  kl_col = custom_kl;
+	    }
 
 	    empty     = (!bitnset(el,bm) || !(k->name && *k->name));
 	    last_time = &last_time_buf[j];
@@ -3214,8 +3262,8 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 #endif
 		    MoveCursor(real_row + i, column + k->column);
 		    if(!empty){
-			if(name_color)
-			  (void)pico_set_colorp(name_color, PSC_NONE);
+			if(kn_col)
+			  (void)pico_set_colorp(kn_col, PSC_NONE);
 			else
 			  StartInverse();
 		    }
@@ -3223,7 +3271,7 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 		    Write_to_screen(temp);
 		    c = k->column + utf8_width(temp);
 		    if(!empty){
-			if(!name_color)
+			if(!kn_col)
 			  EndInverse();
 		    }
 
@@ -3270,8 +3318,8 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 
 		    strncpy(last_time->label, this_label, 6*MAX_LABEL);
 		    last_time->label[6*MAX_LABEL] = '\0';
-		    if(label_color)
-		      (void)pico_set_colorp(label_color, PSC_NONE);
+		    if(kl_col)
+		      (void)pico_set_colorp(kl_col, PSC_NONE);
 
 		    Write_to_screen(temp);
 		}
@@ -3313,10 +3361,21 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 						  : k->name[0],
 			   keystr, print_inverted_label,
 			   real_row+i, k->column, len, 
-			   name_color, label_color);
+			   kn_col, kl_col);
 	    }
 #endif
 
+	    if(custom_kn || custom_kl){
+		if(label_color)
+		  (void)pico_set_colorp(label_color, PSC_NONE);
+		else if(lastc)
+		  (void)pico_set_colorp(lastc, PSC_NONE);
+
+		if(custom_kn)
+		  free_color_pair(&custom_kn);
+		if(custom_kl)
+		  free_color_pair(&custom_kl);
+	    }
         }
 
 	while(++j < 6*(i+1))

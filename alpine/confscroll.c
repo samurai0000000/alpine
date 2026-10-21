@@ -589,7 +589,8 @@ conf_scroll_screen(struct pine *ps, OPT_SCREEN_S *screen, CONF_S *start_line, ch
 
 		    if((cmd = menu_clear_binding(km, 'p')) != MC_UNKNOWN){
 			menu_add_binding(km, 'p', cmd);
-			menu_add_binding(km, KEY_UP, cmd);
+			if(cmd == MC_PREVITEM || cmd == MC_CHARUP)
+			  menu_add_binding(km, KEY_UP, cmd);
 		    }
 
 		    if((cmd = menu_clear_binding(km, 'n')) != MC_UNKNOWN){
