@@ -2530,17 +2530,29 @@ setup_menu(struct pine *ps)
 
     if(mcp_enabled()){
 	so_puts(store, "\n");
-	if(pico_usingcolor())
-	  so_puts(store, color_embed("cyan", NULL));
+	if(pico_usingcolor()){
+	    static char *rainbow[] = {
+		"color009", "color011", "color010",
+		"color014", "color012", "color013"
+	    };
+	    const char *hdr = _("(I) monItor:");
+	    char        ch_buf[2] = { '\0', '\0' };
+	    int         ri = 0;
 
-	so_puts(store, _("(I) monItor:\n"));
-	if(pico_usingcolor())
-	  so_puts(store, color_embed(ps_global->VAR_NORM_FORE_COLOR,
-				     ps_global->VAR_NORM_BACK_COLOR));
+	    for(; *hdr; hdr++){
+		if(*hdr != ' ')
+		  so_puts(store, color_embed(rainbow[ri++ % 6], NULL));
+		ch_buf[0] = *hdr;
+		so_puts(store, ch_buf);
+	    }
+	    so_puts(store, color_embed(ps_global->VAR_NORM_FORE_COLOR,
+				       ps_global->VAR_NORM_BACK_COLOR));
+	    so_puts(store, "\n");
+	}
+	else
+	  so_puts(store, _("(I) monItor:\n"));
 
-	so_puts(store, _("    Shows the state of the MCP mail interface: the operator lock, the\n"));
-	so_puts(store, _("    recipient allow-list and the aimon connection. From there you can\n"));
-	so_puts(store, _("    lock or unlock tool calls and edit the allow-list.\n"));
+	so_puts(store, _("    Setup parameters of MCP tools for interfacing AI agents.\n"));
     }
 
     if(exc){

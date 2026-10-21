@@ -3127,8 +3127,6 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 	    k += 2, el += 2){
 	    COLOR_PAIR *kn_col = name_color;
 	    COLOR_PAIR *kl_col = label_color;
-	    COLOR_PAIR *custom_kn = NULL;
-	    COLOR_PAIR *custom_kl = NULL;
 
             if(k->column > max_column)
               break;
@@ -3136,15 +3134,6 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 	    j++;
             if(ufk)
               fkey = 1 + k - &km->keys[off];
-
-	    if(pico_usingcolor() && k->bind.cmd == MC_MONITOR){
-		custom_kn = new_color_pair("black", "cyan");
-		custom_kl = new_color_pair("cyan", "black");
-		if(custom_kn)
-		  kn_col = custom_kn;
-		if(custom_kl)
-		  kl_col = custom_kl;
-	    }
 
 	    empty     = (!bitnset(el,bm) || !(k->name && *k->name));
 	    last_time = &last_time_buf[j];
@@ -3318,10 +3307,48 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 
 		    strncpy(last_time->label, this_label, 6*MAX_LABEL);
 		    last_time->label[6*MAX_LABEL] = '\0';
-		    if(kl_col)
-		      (void)pico_set_colorp(kl_col, PSC_NONE);
+		    if(pico_usingcolor() && k->bind.cmd == MC_MONITOR){
+			static const char *rainbow[] = {
+			    "color009", "color011", "color010",
+			    "color014", "color012", "color013"
+			};
+			const char *bg = (kl_col && kl_col->bg) ? kl_col->bg :
+					 (ps_global->VAR_NORM_BACK_COLOR ? ps_global->VAR_NORM_BACK_COLOR : "black");
+			const char *tp;
+			int ri = 0;
 
-		    Write_to_screen(temp);
+			for(tp = temp; *tp; tp++){
+			    char ch_buf[2];
+
+			    ch_buf[0] = *tp;
+			    ch_buf[1] = '\0';
+			    if(*tp != SPACE){
+				COLOR_PAIR *rcp = new_color_pair((char *) rainbow[ri++ % 6], (char *) bg);
+
+				if(rcp){
+				    (void)pico_set_colorp(rcp, PSC_NONE);
+				    free_color_pair(&rcp);
+				}
+			    }
+			    else if(kl_col)
+			      (void)pico_set_colorp(kl_col, PSC_NONE);
+			    else if(lastc)
+			      (void)pico_set_colorp(lastc, PSC_NONE);
+
+			    Write_to_screen(ch_buf);
+			}
+
+			if(kl_col)
+			  (void)pico_set_colorp(kl_col, PSC_NONE);
+			else if(lastc)
+			  (void)pico_set_colorp(lastc, PSC_NONE);
+		    }
+		    else{
+			if(kl_col)
+			  (void)pico_set_colorp(kl_col, PSC_NONE);
+
+			Write_to_screen(temp);
+		    }
 		}
 	    }
 #ifdef	MOUSE
@@ -3364,18 +3391,6 @@ output_keymenu(struct key_menu *km, unsigned char *bm, int row, int column)
 			   kn_col, kl_col);
 	    }
 #endif
-
-	    if(custom_kn || custom_kl){
-		if(label_color)
-		  (void)pico_set_colorp(label_color, PSC_NONE);
-		else if(lastc)
-		  (void)pico_set_colorp(lastc, PSC_NONE);
-
-		if(custom_kn)
-		  free_color_pair(&custom_kn);
-		if(custom_kl)
-		  free_color_pair(&custom_kl);
-	    }
         }
 
 	while(++j < 6*(i+1))

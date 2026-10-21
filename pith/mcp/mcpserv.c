@@ -1341,11 +1341,11 @@ aimon_connected(void)
 }
 
 
-/* host must be a numeric address: a name lookup could block the listener */
+/* host may be an IP address or a DNS hostname */
 static void
 aimon_start_connect(void)
 {
-    struct addrinfo hints, *ai = NULL;
+    struct addrinfo hints, *ai = NULL, *cur, *pick;
     char            host[128], svc[16];
     int             port, fd, rc, one = 1, err;
 
@@ -1358,14 +1358,24 @@ aimon_start_connect(void)
     snprintf(svc, sizeof(svc), "%d", port);
     memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-    if(getaddrinfo(host, svc, &hints, &ai) != 0 || ai == NULL){
-	aimon_schedule_retry("aimon.host must be an IP address");
+    hints.ai_flags = AI_NUMERICSERV;
+    if((rc = getaddrinfo(host, svc, &hints, &ai)) != 0 || ai == NULL){
+	if(ai)
+	  freeaddrinfo(ai);
+	aimon_schedule_retry(rc != 0 ? gai_strerror(rc) : "cannot resolve aimon host");
 	return;
     }
 
-    fd = socket(ai->ai_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC,
-		ai->ai_protocol);
+    pick = ai;
+    for(cur = ai; cur != NULL; cur = cur->ai_next){
+	if(cur->ai_family == AF_INET){
+	    pick = cur;
+	    break;
+	}
+    }
+
+    fd = socket(pick->ai_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC,
+		pick->ai_protocol);
     if(fd < 0){
 	err = errno;
 	freeaddrinfo(ai);
@@ -1374,7 +1384,7 @@ aimon_start_connect(void)
     }
 
     (void) setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-    rc = connect(fd, ai->ai_addr, ai->ai_addrlen);
+    rc = connect(fd, pick->ai_addr, pick->ai_addrlen);
     err = errno;
     freeaddrinfo(ai);
 

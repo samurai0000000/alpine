@@ -201,6 +201,27 @@ mon_set_lock(int on)
 
 
 static void
+mon_wait_aimon_settle(void)
+{
+    char status[256];
+    int  i;
+
+    if(!mcp_aimon_enabled())
+      return;
+
+    for(i = 0; i < 25; i++){
+	status[0] = '\0';
+	mcp_aimon_status(status, sizeof(status));
+	if(strcmp(status, "connecting to aimon") != 0
+	   && strcmp(status, "registering with aimon") != 0)
+	  break;
+
+	usleep(10 * 1000);
+    }
+}
+
+
+static void
 mon_toggle_aimon(void)
 {
     char why[256];
@@ -217,6 +238,7 @@ mon_toggle_aimon(void)
     }
 
     mcp_aimon_kick(0);
+    mon_wait_aimon_settle();
     q_status_message(SM_ORDER, 0, 3,
 		     was ? _("aimon gateway turned off")
 			 : _("aimon gateway turned on"));
@@ -254,6 +276,8 @@ mon_edit_host(void)
         }
         if(mcp_aimon_enabled()){
             mcp_aimon_kick(1);
+            mon_wait_aimon_settle();
+            mcp_titlebar_color_update();
         }
         q_status_message1(SM_ORDER, 0, 3,
                           _("aimon host set to %s"), (void *) host);
@@ -295,6 +319,8 @@ mon_edit_port(void)
         }
         if(mcp_aimon_enabled()){
             mcp_aimon_kick(1);
+            mon_wait_aimon_settle();
+            mcp_titlebar_color_update();
         }
         q_status_message1(SM_ORDER, 0, 3,
                           _("aimon port set to %s"), (void *) buf);
@@ -619,6 +645,7 @@ mcp_tool(struct pine *ps, int cmd, CONF_S **cl, unsigned int flags)
       case MC_MON_RECONN:
         if(mcp_aimon_enabled()){
             mcp_aimon_kick(1);
+            mon_wait_aimon_settle();
             mcp_titlebar_color_update();
             q_status_message(SM_ORDER, 0, 3,
                              _("aimon connection dropped, registering again"));
