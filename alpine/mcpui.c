@@ -48,13 +48,28 @@ extern int     ready_for_winch, winch_occured;
 #endif
 
 
+static int
+mcp_ui_wake_return(void)
+{
+    if(mcp_take_new_park())
+      return(1);
+    if(ps_global && (ps_global->mangled_header
+		     || ps_global->mangled_screen
+		     || ps_global->mangled_footer
+		     || sp_a_locked_stream_is_dead()
+		     || sp_a_locked_stream_changed()))
+      return(1);
+    return(0);
+}
+
+
 void
 mcp_ui_init(void)
 {
     if(!mcp_enabled())
       return;
 
-    input_ready_wake_return = mcp_take_new_park;
+    input_ready_wake_return = mcp_ui_wake_return;
     if(mcp_server_running()){
 	input_ready_wake_fd = mcp_wake_fd;
 	input_ready_wake_run = mcp_ui_drain;

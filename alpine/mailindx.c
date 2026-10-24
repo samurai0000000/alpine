@@ -407,11 +407,9 @@ index_lister(struct pine *state, CONTEXT_S *cntxt, char *folder, MAILSTREAM *str
 	    if(rc == 1){
 		state->mangled_header = 1;
 		state->mangled_footer = 1;
-		q_status_message(SM_ORDER, 0, 2, _("Folder connection restored."));
 	    }
 	    else if(rc == -1){
 		state->mangled_screen = 1;
-		q_status_message(SM_ORDER, 0, 2, _("Folder reconnected and synchronized."));
 	    }
 	}
 

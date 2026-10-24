@@ -821,11 +821,9 @@ long imap_renew (MAILSTREAM *stream, MAILSTREAM *m)
         if (!MLOCAL || !MLOCAL->netstream) return 1L;
         if (m_uid != mail_elt (stream, i)->private.uid) resync = 1;
       }
-      else {
-        if ((m->uid_last < stream->uid_last) ||
-            ((m->nmsgs == stream->nmsgs) && (m->uid_last != stream->uid_last)))
-          resync = 1;
-      }
+      if ((m->uid_last < stream->uid_last) ||
+          ((m->nmsgs == stream->nmsgs) && (m->uid_last != stream->uid_last)))
+        resync = 1;
     }
   }
 
@@ -839,6 +837,20 @@ long imap_renew (MAILSTREAM *stream, MAILSTREAM *m)
   stream->unhealthy = NIL;
   stream->uid_validity = m->uid_validity;
   stream->uid_last = m->uid_last;
+  if (m->auth.expiration > 0) stream->auth.expiration = m->auth.expiration;
+  stream->rdonly = m->rdonly;
+  stream->perm_seen = m->perm_seen;
+  stream->perm_deleted = m->perm_deleted;
+  stream->perm_flagged = m->perm_flagged;
+  stream->perm_answered = m->perm_answered;
+  stream->perm_draft = m->perm_draft;
+  stream->kwd_create = m->kwd_create;
+  stream->perm_user_flags = m->perm_user_flags;
+  {
+    IMAPCAP tmp_cap = LOCAL->cap;
+    LOCAL->cap = MLOCAL->cap;
+    MLOCAL->cap = tmp_cap;
+  }
 
   if (resync) {
     unsigned int save_silent = stream->silent;

@@ -354,7 +354,13 @@ mm_login_oauth2_c_client_method (NETMBX *mb, char *user, char *method,
 
 	     default :  { char tmp[200];
 			  char *err, *err_desc;
+			  int permanent_err = 0;
 			  jx = json_body_value(json, "error");
+			  if(status == HTTP_BAD && jx && jx->jtype == JString && jx->value
+			     && (!compare_cstring((unsigned char *) jx->value, "invalid_grant")
+				 || !compare_cstring((unsigned char *) jx->value, "unauthorized_client")
+				 || !compare_cstring((unsigned char *) jx->value, "invalid_client")))
+			    permanent_err = 1;
 			  err = cpystr(jx && jx->jtype == JString ? (char *) jx->value : "Unknown error");
 			  jx = json_body_value(json, "error_description");
 			  err_desc = cpystr(jx && jx->jtype == JString ? (char *) jx->value : "No description");
@@ -362,11 +368,20 @@ mm_login_oauth2_c_client_method (NETMBX *mb, char *user, char *method,
 			  mm_log (tmp, ERROR);
 			  if(err) fs_give((void **) &err);
 			  if(err_desc) fs_give((void **) &err_desc);
-			  oauth2->cancel_refresh_token++;
+			  if(permanent_err)
+			    oauth2->cancel_refresh_token++;
+			  else {
+			    oauth2->cancel_refresh_token = 0;
+			    *tryanother = 1;
+			  }
 			}
 			break;
 	}
 	json_free(&json);
+     }
+     else {
+	oauth2->cancel_refresh_token = 0;
+	*tryanother = 1;
      }
      return;
    }
@@ -589,7 +604,7 @@ void renew_accesstoken(MAILSTREAM *stream)
     OAUTH2_S oauth2;
     NETMBX mb;
     char user[MAILTMPLEN];
-    int tryanother;
+    int tryanother = 0;
     unsigned long trial = 0;
 
     mm_log("renew_accesstoken().", (long) NIL);
@@ -602,7 +617,7 @@ void renew_accesstoken(MAILSTREAM *stream)
     if(oauth2.access_token)	/* we need a new one */
       fs_give((void **) &oauth2.access_token);
 
-    if(oauth2.expiration > time(0) + 180){
+    if(oauth2.expiration > time(0) + 300){
        stream->auth.expiration = oauth2.expiration;
        oauth2_free_extra_values(oauth2);
        return;
@@ -612,9 +627,10 @@ void renew_accesstoken(MAILSTREAM *stream)
 
     mm_login_oauth2_c_client_method (&mb, user, stream->auth.name, &oauth2, trial, &tryanother);
 
-    if(oauth2.access_token){
+    if(!tryanother && (oauth2.access_token || oauth2.cancel_refresh_token)){
 	mm_login_method (&mb, user, (void *) &oauth2, trial, stream->auth.name);
-	stream->auth.expiration = oauth2.expiration;
+	if(oauth2.access_token)
+	  stream->auth.expiration = oauth2.expiration;
     }
 
     oauth2_free_extra_values(oauth2);

@@ -367,6 +367,8 @@ oauth2_set_device_info(OAUTH2_S *oa2, char *method)
    OAUTH2_DEVICEPROC_S aux_value;
 
    dprint((2, "-- oauth2_set_device_info\n"));
+   if(mcp_noninteractive() || pine_in_background_reconnect())
+     return;
    ps_global->in_xoauth2_auth = 1;
    if(ps_global->ttyo){
 	SCROLL_S  sargs;
@@ -537,6 +539,11 @@ oauth2_get_access_code(unsigned char *url, char *method, OAUTH2_S *oauth2, int *
    char *code = NULL;
 
    dprint((2, "-- oauth2_get_access_code\n"));
+   if(mcp_noninteractive() || pine_in_background_reconnect()){
+      if(tryanother)
+        *tryanother = 0;
+      return NULL;
+   }
    ps_global->in_xoauth2_auth = 1;
    if(ps_global->ttyo){
 	SCROLL_S  sargs;
@@ -792,6 +799,7 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
     int       len, q_line, flags, i, j;
     int       save_in_init;
     int	      registered;
+    int       cancel_refresh, non_interactive;
     int       ChangeAccessToken, ChangeRefreshToken, ChangeExpirationTime;
     OAUTH2_S  *oa2list, *oa2;
     XOAUTH2_INFO_S *x;
@@ -807,6 +815,9 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
 	       mb->port ? comatose(mb->port) : "",
 	       altuserforcache ? " altuserforcache =" : "",
 	       altuserforcache ? altuserforcache : ""));
+
+    cancel_refresh = login ? login->cancel_refresh_token : 0;
+    non_interactive = mcp_noninteractive() || pine_in_background_reconnect();
 
     q_line = -(ps_global->ttyo ? ps_global->ttyo->footer_rows : 3);
 
@@ -841,10 +852,10 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
 	}
     }
 
-    if(trial == 0L && !altuserforcache){
+    if((trial == 0L || (trial == 1L && !cancel_refresh)) && !altuserforcache){
        if(*mb->user != '\0')
 	   strncpy(user, mb->user, NETMAXUSER);
-	else{
+	else if(!non_interactive){
 	   flags = OE_APPEND_CURRENT;
 	   sprintf(prompt, "%s: %s - %s: ", hostlabel, mb->orighost, userlabel);
 	   optionally_enter(user, q_line, 0, NETMAXUSER, prompt, NULL, NO_HELP, &flags);
@@ -933,13 +944,24 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
     if(registered)
        oa2list->param[OA2_State].value = login->param[OA2_State].value;
 
-    if(login->cancel_refresh_token){
+    if(cancel_refresh){
 	imap_delete_passwd_auth(&mm_login_list, user,
 		registered ? hostlist2 : hostlist,
 		(mb->sslflag||mb->tlsflag), OA2NAME);
 #ifdef LOCAL_PASSWD_CACHE
 	write_passfile(ps_global->pinerc, mm_login_list);
 #endif /* LOCAL_PASSWD_CACHE */
+	if(login){
+	    if(login->param[OA2_RefreshToken].value)
+	      fs_give((void **) &login->param[OA2_RefreshToken].value);
+	    if(login->access_token)
+	      fs_give((void **) &login->access_token);
+	    login->expiration = 0L;
+	    login->cancel_refresh_token = 0;
+	}
+	ps_global->no_newmail_check_from_optionally_enter = 0;
+	ps_global->in_init_seq = save_in_init;
+	return;
     }
 
     /*
@@ -948,7 +970,7 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
      * get an access code so we can get (and save) a refresh token
      * and use the access token.
      */
-    if(trial == 0L && !altuserforcache){
+    if((trial == 0L || (trial == 1L && !cancel_refresh)) && !altuserforcache){
 	/* Search for a refresh token that is already loaded ... */
 	if(imap_get_passwd_auth(mm_login_list, &token, user, 
 	   registered ? hostlist2 : hostlist,
@@ -976,7 +998,7 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
     user[NETMAXUSER-1] = '\0';
 
     /* The Old* variables is what c_client knows */
-    OldRefreshToken   = login->cancel_refresh_token ? NULL : login->param[OA2_RefreshToken].value;
+    OldRefreshToken   = cancel_refresh ? NULL : login->param[OA2_RefreshToken].value;
     OldAccessToken    = login->access_token;
     OldExpirationTime = login->expiration;
 
@@ -1008,21 +1030,28 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
 	     NewAccessToken = cpystr(s);
 	     s = t;
 	     NewExpirationTime = strtol(s, &s, 10);
-	     if(NewExpirationTime <= 0 || NewExpirationTime <= time(0) + 120)
+	     if(NewExpirationTime <= 0 || NewExpirationTime <= time(0) + 300)
 		NewExpirationTime = 0L;
 	  }
        }
        /* check we got good information, and send good information below */
        if(NewRefreshToken && !*NewRefreshToken)
 	  fs_give((void **) &NewRefreshToken);
+       if(trial > 0L && OldAccessToken == NULL){
+	  if(NewAccessToken)
+	    fs_give((void **) &NewAccessToken);
+	  NewExpirationTime = 0L;
+       }
        if(NewAccessToken && (NewExpirationTime == 0L || !*NewAccessToken)) 
 	  fs_give((void **) &NewAccessToken);
     }
 
-    if(NewRefreshToken == NULL)
+    if(NewRefreshToken == NULL && OldRefreshToken == NULL && !cancel_refresh && !non_interactive)
        login->first_time++;
+    else if(NewRefreshToken == NULL && OldRefreshToken == NULL && (cancel_refresh || non_interactive))
+       registered = 0;
 
-    if(login->first_time){	/* count how many authorization methods we support */
+    if(login->first_time && !cancel_refresh && !non_interactive){	/* count how many authorization methods we support */
 	int nmethods, j;
 
 	for(nmethods = 0, oa2 = alpine_oauth2_list; oa2 && oa2->name ; oa2++){
@@ -1058,7 +1087,7 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
            expire, so we can use it until it expires. We can save the c-client refresh token
            together with the Alpine Access Token and the expiration date of the Alpine Access
 	   Token.
-       } else if(c-client does not have a refresh token and Alpine has one and this is not the first attempt){
+       } else if(c-client explicitly cancelled the refresh token and Alpine has one){
 	   forget the Alpine refresh token;
 	   if Alpine has an access token, forget it;
 	   reset the expiration time
@@ -1074,7 +1103,7 @@ mm_login_oauth2(NETMBX *mb, char *user, char *method,
 	SaveRefreshToken = OldRefreshToken;
 	SaveAccessToken  = NewAccessToken;
 	SaveExpirationTime = NewExpirationTime;
-    } else if (OldRefreshToken == NULL && NewRefreshToken != NULL && trial > 0){
+    } else if (cancel_refresh && NewRefreshToken != NULL){
 	fs_give((void **) &NewRefreshToken);
 	if(NewAccessToken) fs_give((void **) &NewAccessToken);
 	NewExpirationTime = 0L;
@@ -1171,8 +1200,8 @@ mcp_oauth2_cached(NETMBX *mb, char *method, long int trial)
     char      *token = NULL;
     int	       i = 0, j, registered = 0, found = 0;
 
-    if(mb == NULL || method == NULL || trial != 0L
-       || strucmp(method, OA2NAME) != 0
+    if(mb == NULL || method == NULL || (trial != 0L && trial != 1L)
+       || (strucmp(method, OA2NAME) != 0 && strucmp(method, BEARERNAME) != 0)
        || mb->user[0] == '\0')
       return(0);
 
@@ -1780,6 +1809,13 @@ mm_login_work(NETMBX *mb, char *user, char **pwd, long int trial,
     }
 
     user[NETMAXUSER-1] = '\0';
+
+    if(mcp_noninteractive() || pine_in_background_reconnect()){
+	user[0] = '\0';
+	ps_global->no_newmail_check_from_optionally_enter = 0;
+	ps_global->in_init_seq = save_in_init;
+	return;
+    }
 
     if(trial == 0)
       retry = "";
@@ -2491,6 +2527,18 @@ pine_tcptimeout(long int elapsed, long int sincelast, char *host)
     if(ps_global->noshow_timeout)
       return(rv);
 
+    if(mcp_noninteractive() || pine_in_background_reconnect()){	/* MCP or background reconnect: never prompt */
+	ps_global->tcptimeout = 0;
+	if(elapsed >= (long)ps_global->tcp_query_timeout){
+	    if(mcp_noninteractive())
+	      mcp_note_cclient_msg("no reply from server; connection broken",
+				   ERROR);
+	    return(0L);
+	}
+
+	return(rv);
+    }
+
     if(ps_global->can_interrupt
 	&& ps_global->close_connection_timeout > 0L
 	&& elapsed >= (long)ps_global->tcp_query_timeout
@@ -2500,17 +2548,6 @@ pine_tcptimeout(long int elapsed, long int sincelast, char *host)
 	ps_global->user_says_cancel = 1;
 	return 0;
     } 
-
-    if(mcp_noninteractive()){	/* MCP tool running: never prompt */
-	ps_global->tcptimeout = 0;
-	if(elapsed >= (long)ps_global->tcp_query_timeout){
-	    mcp_note_cclient_msg("no reply from server; connection broken",
-				 ERROR);
-	    return(0L);
-	}
-
-	return(rv);
-    }
 
     if(!ps_global->ttyo)
       return(pine_tcptimeout_noscreen(elapsed, sincelast, host));

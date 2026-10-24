@@ -576,6 +576,13 @@ mcp_run_set_flag(cJSON *args, MCP_CALL_S *call)
 
 	mcp_cur_reset();
 	mail_flag(s, uids.set, (char *) flag, ST_UID | (set ? ST_SET : 0));
+	if((sp_dead_stream(s) || s->unhealthy) && is_imap_stream(s)){
+	    sp_set_dead_stream(s, 1);
+	    if(pine_attempt_reconnect(s) != 0){
+		mcp_cur_reset();
+		mail_flag(s, uids.set, (char *) flag, ST_UID | (set ? ST_SET : 0));
+	    }
+	}
 
 	/* read back and mcp_batch_classify pass 1 */
 	if(!mcp_uids_prepare(s, args, call, &uids, flag, set, state)){
@@ -681,6 +688,21 @@ mcp_run_set_flag(cJSON *args, MCP_CALL_S *call)
     snprintf(seq, sizeof(seq), "%lu", uid);
     mcp_cur_reset();
     mail_flag(s, seq, (char *) flag, ST_UID | (set ? ST_SET : 0));
+    if((sp_dead_stream(s) || s->unhealthy) && is_imap_stream(s)){
+	sp_set_dead_stream(s, 1);
+	if(pine_attempt_reconnect(s) != 0){
+	    mcp_cur_reset();
+	    mail_flag(s, seq, (char *) flag, ST_UID | (set ? ST_SET : 0));
+	    msgno = mail_msgno(s, uid);
+	}
+    }
+
+    if(msgno == 0L || msgno > s->nmsgs){
+	mcp_call_error(call, MCP_ERR_INTERNAL,
+		       "the server did not change the flag");
+	mcp_release(s, opened);
+	return;
+    }
 
     /* read the flag back; the server's answer is what counts */
     elt = mail_elt(s, msgno);

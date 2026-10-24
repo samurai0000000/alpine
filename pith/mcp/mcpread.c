@@ -123,12 +123,25 @@ mcp_acquire(const char *mbox, int *opened, MCP_CALL_S *call)
       s = sp_stream_get((char *) mbox, SP_MATCH | SP_RO_OK);
     if(s != NULL){
 	if(sp_dead_stream(s) || (is_imap_stream(s) && !pine_mail_ping(s))){
+	    sp_set_dead_stream(s, 1);
 	    if(is_imap_stream(s) && pine_attempt_reconnect(s) != 0){
 		mcp_cur_reset();
 		return(s);
 	    }
 
 	    sp_mark_stream_dead(s);
+	    if(sp_flagged(s, SP_LOCKED) || s == ps_global->mail_stream){
+		if(mcp_cur_login_needed(host, sizeof(host))){
+		    mcp_call_error(call, MCP_ERR_NOT_AUTH,
+				   "host %.200s is not logged in; log in on the Alpine screen",
+				   host);
+		    return(NULL);
+		}
+		if(!mcp_cur_cclient_error(err, sizeof(err)))
+		  snprintf(err, sizeof(err), "could not reconnect to the folder");
+		mcp_call_error(call, MCP_ERR_INTERNAL, "%.400s", err);
+		return(NULL);
+	    }
 	    s = NULL;
 	}
 	else{
@@ -138,21 +151,59 @@ mcp_acquire(const char *mbox, int *opened, MCP_CALL_S *call)
     }
 
     if(s == NULL && ps_global->mail_stream){
-	if(!sp_dead_stream(ps_global->mail_stream)
-	   && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)){
+	char *pmbox = ps_global->mail_stream->original_mailbox ?
+		      ps_global->mail_stream->original_mailbox : ps_global->mail_stream->mailbox;
+	if(pmbox && same_remote_mailboxes((char *) mbox, pmbox)){
+	    if(sp_dead_stream(ps_global->mail_stream)
+	       || (is_imap_stream(ps_global->mail_stream) && !pine_mail_ping(ps_global->mail_stream))){
+		sp_set_dead_stream(ps_global->mail_stream, 1);
+		if(is_imap_stream(ps_global->mail_stream)
+		   && pine_attempt_reconnect(ps_global->mail_stream) != 0){
+		    s = ps_global->mail_stream;
+		    mcp_cur_reset();
+		    return(s);
+		}
+		sp_mark_stream_dead(ps_global->mail_stream);
+		if(mcp_cur_login_needed(host, sizeof(host))){
+		    mcp_call_error(call, MCP_ERR_NOT_AUTH,
+				   "host %.200s is not logged in; log in on the Alpine screen",
+				   host);
+		    return(NULL);
+		}
+		if(!mcp_cur_cclient_error(err, sizeof(err)))
+		  snprintf(err, sizeof(err), "could not reconnect to the folder");
+		mcp_call_error(call, MCP_ERR_INTERNAL, "%.400s", err);
+		return(NULL);
+	    }
 	    s = ps_global->mail_stream;
 	    mcp_cur_reset();
 	    return(s);
 	}
-	else if(sp_dead_stream(ps_global->mail_stream)){
-	    char *pmbox = ps_global->mail_stream->original_mailbox ?
-			  ps_global->mail_stream->original_mailbox : ps_global->mail_stream->mailbox;
-	    if(pmbox && same_remote_mailboxes((char *) mbox, pmbox)
-	       && is_imap_stream(ps_global->mail_stream)
-	       && pine_attempt_reconnect(ps_global->mail_stream) != 0){
-		s = ps_global->mail_stream;
-		mcp_cur_reset();
-		return(s);
+	else if(!sp_dead_stream(ps_global->mail_stream)
+		&& same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)){
+	    s = ps_global->mail_stream;
+	    mcp_cur_reset();
+	    return(s);
+	}
+    }
+
+    if(s == NULL && IS_REMOTE(mbox)){
+	int i;
+	for(i = 0; i < ps_global->s_pool.nstream; i++){
+	    MAILSTREAM *m = ps_global->s_pool.streams[i];
+	    char *mmbox = m ? (m->original_mailbox ? m->original_mailbox : m->mailbox) : NULL;
+	    if(m && sp_flagged(m, SP_LOCKED) && sp_dead_stream(m)
+	       && mmbox && same_remote_mailboxes((char *) mbox, mmbox)){
+		if(mcp_cur_login_needed(host, sizeof(host))){
+		    mcp_call_error(call, MCP_ERR_NOT_AUTH,
+				   "host %.200s is not logged in; log in on the Alpine screen",
+				   host);
+		    return(NULL);
+		}
+		if(!mcp_cur_cclient_error(err, sizeof(err)))
+		  snprintf(err, sizeof(err), "could not reconnect to the folder");
+		mcp_call_error(call, MCP_ERR_INTERNAL, "%.400s", err);
+		return(NULL);
 	    }
 	}
     }
@@ -755,10 +806,17 @@ status_one(const char *mbox, cJSON *res, MCP_CALL_S *c)
     cJSON_AddStringToObject(res, "mailbox", mbox);
 
     s = already_open_stream((char *) mbox, AOS_NONE);
-    if(s == NULL && ps_global->mail_stream
-       && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream)
-       && !sp_dead_stream(ps_global->mail_stream))
-      s = ps_global->mail_stream;
+    if(s == NULL && ps_global->mail_stream){
+	char *pmbox = ps_global->mail_stream->original_mailbox ?
+		      ps_global->mail_stream->original_mailbox : ps_global->mail_stream->mailbox;
+	if(sp_dead_stream(ps_global->mail_stream)
+	   && pmbox && same_remote_mailboxes((char *) mbox, pmbox)
+	   && is_imap_stream(ps_global->mail_stream))
+	  pine_attempt_reconnect(ps_global->mail_stream);
+	if(!sp_dead_stream(ps_global->mail_stream)
+	   && same_stream_and_mailbox((char *) mbox, ps_global->mail_stream))
+	  s = ps_global->mail_stream;
+    }
 
     if(s){
 	/*

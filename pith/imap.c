@@ -859,7 +859,7 @@ imap_seq_exec_append(MAILSTREAM *stream, long int msgno, void *args)
 void
 mm_login(NETMBX *mb, char *user, char **pwd, long int trial)
 {
-    if(mcp_noninteractive()){	/* MCP tool running: never prompt */
+    if(mcp_noninteractive() || pine_in_background_reconnect()){	/* MCP or background reconnect: never prompt */
 	mcp_login_cached(mb, user, pwd, trial);
 	return;
     }
@@ -870,7 +870,7 @@ mm_login(NETMBX *mb, char *user, char **pwd, long int trial)
 void
 mm_login_method(NETMBX *mb, char *user, void *login, long int trial, char *method)
 {
-    if(mcp_noninteractive()){	/* MCP tool running: never prompt */
+    if(mcp_noninteractive() || pine_in_background_reconnect()){	/* MCP or background reconnect: never prompt */
 	/*
 	 * A token login with a refresh token the human already holds is
 	 * done as the human's would be; anything that would need a
@@ -1170,8 +1170,7 @@ void
 imap_delete_passwd(MMLOGIN_S **m_list, char *user, STRLIST_S *hostlist, int altflag)
 {
   if(m_list == NULL || *m_list == NULL) return;
-  imap_delete_passwd_auth(m_list, user, hostlist, altflag,
-		strchr((*m_list)->user, PWDAUTHSEP) != NULL ? OA2NAME : NULL);
+  imap_delete_passwd_auth(m_list, user, hostlist, altflag, NULL);
 }
 
 void

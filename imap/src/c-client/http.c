@@ -382,8 +382,11 @@ http_add_header_data(HTTPSTREAM *stream, unsigned char *hdata)
     hname = fs_get((h-hdata+2)*sizeof(char));
     strncpy(hname, hdata, h-hdata);
     hname[h-hdata] = '\0';
-    if(!valid_token_name(hname))
+    if(!valid_token_name(hname)){
+       *h = ':';
+       fs_give((void **) &hname);
        return;
+    }
     hname[h-hdata] = ':';
     hname[h-hdata+1] = '\0';
     *h++ = ':';
@@ -532,6 +535,7 @@ http_add_header_data(HTTPSTREAM *stream, unsigned char *hdata)
 
       default:  break;
   }
+  fs_give((void **) &hname);
 }
 
 
@@ -989,6 +993,74 @@ http_get(HTTPSTREAM *stream, HTTP_PARAM_S **h)
   return response;
 }
 
+static void
+http_param_list_free(HTTP_PARAM_LIST_S **pl)
+{
+  if(!pl || !*pl) return;
+  if((*pl)->next) http_param_list_free(&(*pl)->next);
+  if((*pl)->vp){
+     if((*pl)->vp->value) fs_give((void **) &(*pl)->vp->value);
+     if((*pl)->vp->plist) mail_free_body_parameter(&(*pl)->vp->plist);
+     fs_give((void **) &(*pl)->vp);
+  }
+  fs_give((void **) pl);
+}
+
+static void
+http_header_value_free(HTTP_HEADER_S **h)
+{
+  if(!h || !*h) return;
+  if((*h)->data) fs_give((void **) &(*h)->data);
+  if((*h)->p) http_param_list_free(&(*h)->p);
+  fs_give((void **) h);
+}
+
+void
+http_header_free(HTTP_HEADER_DATA_S **hd)
+{
+  if(!hd || !*hd) return;
+  http_header_value_free(&(*hd)->accept);
+  http_header_value_free(&(*hd)->accept_charset);
+  http_header_value_free(&(*hd)->accept_encoding);
+  http_header_value_free(&(*hd)->accept_language);
+  http_header_value_free(&(*hd)->accept_ranges);
+  http_header_value_free(&(*hd)->age);
+  http_header_value_free(&(*hd)->allow);
+  http_header_value_free(&(*hd)->cache_control);
+  http_header_value_free(&(*hd)->connection);
+  http_header_value_free(&(*hd)->content_disposition);
+  http_header_value_free(&(*hd)->content_encoding);
+  http_header_value_free(&(*hd)->content_language);
+  http_header_value_free(&(*hd)->content_length);
+  http_header_value_free(&(*hd)->content_location);
+  http_header_value_free(&(*hd)->content_type);
+  http_header_value_free(&(*hd)->date);
+  http_header_value_free(&(*hd)->etag);
+  http_header_value_free(&(*hd)->expect);
+  http_header_value_free(&(*hd)->expires);
+  http_header_value_free(&(*hd)->from);
+  http_header_value_free(&(*hd)->host);
+  http_header_value_free(&(*hd)->last_modified);
+  http_header_value_free(&(*hd)->location);
+  http_header_value_free(&(*hd)->max_forwards);
+  http_header_value_free(&(*hd)->mime_version);
+  http_header_value_free(&(*hd)->pragma);
+  http_header_value_free(&(*hd)->proxy_authenticate);
+  http_header_value_free(&(*hd)->referer);
+  http_header_value_free(&(*hd)->retry_after);
+  http_header_value_free(&(*hd)->server);
+  http_header_value_free(&(*hd)->user_agent);
+  http_header_value_free(&(*hd)->te);
+  http_header_value_free(&(*hd)->trailer);
+  http_header_value_free(&(*hd)->transfer_encoding);
+  http_header_value_free(&(*hd)->upgrade);
+  http_header_value_free(&(*hd)->via);
+  http_header_value_free(&(*hd)->vary);
+  http_header_value_free(&(*hd)->warning);
+  http_header_value_free(&(*hd)->www_authenticate);
+  fs_give((void **) hd);
+}
+
 void
 http_close (HTTPSTREAM *stream)
 {
@@ -1000,6 +1072,8 @@ http_close (HTTPSTREAM *stream)
      if (stream->urltail)  fs_give ((void **) &stream->urltail);
      if (stream->response) fs_give ((void **) &stream->response);
      if (stream->reply)    fs_give ((void **) &stream->reply);
+     if (stream->status)   http_status_line_free (&stream->status);
+     if (stream->header)   http_header_free (&stream->header);
      fs_give((void **) &stream);
   }
 }
@@ -1110,8 +1184,11 @@ http_reply (HTTPSTREAM *stream)
   }
 
   http_parse_headers(stream);
-  if(stream->header->content_length){
-     size = atol(stream->header->content_length->p->vp->value);
+  if(stream->header && stream->header->content_length &&
+     stream->header->content_length->p &&
+     stream->header->content_length->p->vp &&
+     stream->header->content_length->p->vp->value){
+     size = strtoul(stream->header->content_length->p->vp->value, NIL, 10);
      if (stream->response) fs_give ((void **) &stream->response);
      stream->response = (unsigned char *) net_getsize (stream->netstream, size);
      if(stream->response){
@@ -1119,13 +1196,13 @@ http_reply (HTTPSTREAM *stream)
 	if(stream->debug) mm_log(stream->response, HTTPDEBUG);
      }
   }
-  else if (stream->header->transfer_encoding){
+  else if (stream->header && stream->header->transfer_encoding){
      HTTP_PARAM_LIST_S *p = stream->header->transfer_encoding->p;
      for(; p ; p = p->next){
-	if(!compare_cstring(p->vp->value, "chunked"))
+	if(p->vp && p->vp->value && !compare_cstring(p->vp->value, "chunked"))
 	   break;
      }
-     if(p && p->vp->value){	/* chunked transfer */
+     if(p && p->vp && p->vp->value){	/* chunked transfer */
 	unsigned char *s = NIL;
 	do {
 	  if (s) fs_give ((void **) &s);

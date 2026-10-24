@@ -2768,8 +2768,9 @@ scrolltool(SCROLL_S *sparms)
 	  q_status_message(SM_ORDER, 0, 3, HANDLE_INIT_MSG);
 
 	/*============ Check for New Mail and CheckPoint ============*/
-        if(!sparms->quell_newmail &&
-	   new_mail(force, NM_TIMING(ch), NM_STATUS_MSG) >= 0){
+        if(!sparms->quell_newmail
+           && (new_mail(force, NM_TIMING(ch), NM_STATUS_MSG) >= 0
+               || ps_global->mangled_header)){
 	    update_scroll_titlebar(cur_top_line, 1);
 	    if(ps_global->mangled_footer)
               draw_keymenu(km, bitmap, ps_global->ttyo->screen_cols,

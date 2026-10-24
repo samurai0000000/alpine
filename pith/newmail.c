@@ -105,10 +105,6 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
       html_dir_clean(0);
     }
 
-    if(time_for_check_point == GoodTime || force_arg)
-      folder_unseen_count_updater(UFU_ANNOUNCE | (force_arg ? UFU_FORCE : 0));
-
-
     if(sp_need_to_rethread(ps_global->mail_stream))
       force = 1;
 
@@ -129,17 +125,14 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	m = ps_global->s_pool.streams[i];
 	if(m && !sp_dead_stream(m) && m->auth.name
 	   && (!strucmp(m->auth.name, OA2NAME) || !strucmp(m->auth.name, BEARERNAME))
-	   && now + 180 >= m->auth.expiration){	/* procastinate doing this */
+	   && now + 300 >= m->auth.expiration){	/* procastinate doing this */
 	      int skip = m->auth.expiration == 0 ? 1 : 0;
 	      dprint((9, "renew_accesstoken: %s: now = %lu, auth = %s, expiration = %lu\n", STREAMNAME(m), now, m->auth.name, m->auth.expiration));
 	      ps_global->noshow_error = 1;	/* make this invisible to the user */
 	      renew_accesstoken(m);
-	      if(skip == 0 || m->auth.expiration == 0 || now + 180 >= m->auth.expiration){
+	      if(skip == 0 || m->auth.expiration == 0 || now + 300 >= m->auth.expiration){
 		long renew_rv;
 		unsigned long cur_uid = 0L;
-
-		if(!sp_dead_stream(m) && is_imap_stream(m))
-		  pine_mail_ping(m);
 
 		if(!m->halfopen && sp_msgmap(m) && mn_get_total(sp_msgmap(m)) > 0L){
 		    long cur_raw = mn_m2raw(sp_msgmap(m), mn_get_cur(sp_msgmap(m)));
@@ -150,16 +143,30 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 
 		renew_rv = mail_renew_stream(m);
 		if(renew_rv == 0L){
+		    now = time(0);
+		    sp_set_dead_stream(m, 0);
+		    sp_set_noticed_dead_stream(m, 0);
+		    sp_set_io_error_on_stream(m, 0);
+		    sp_set_reconnect_failures(m, 0);
+		    sp_set_last_reconnect_time(m, (time_t) 0);
 		    sp_set_last_ping(m, now);
 		    sp_set_last_activity(m, now);
+		    sp_set_last_expunged_reaper(m, now);
 		}
 		else if(renew_rv == -1L){
+		    now = time(0);
 		    pine_resync_stream_after_renew(m, cur_uid);
+		    sp_set_reconnect_failures(m, 0);
+		    sp_set_last_reconnect_time(m, (time_t) 0);
+		    sp_set_last_ping(m, now);
+		    sp_set_last_activity(m, now);
+		    sp_set_last_expunged_reaper(m, now);
+		    ps_global->mangled_header = 1;
 		    if(sp_locked(m) && !sp_flagged(m, SP_TEMP) && reconnected_status == 0)
 		      reconnected_status = -1;
 		}
 
-		if(renew_rv > 0L || m->auth.expiration <= now + 180){
+		if(renew_rv > 0L || m->auth.expiration <= now + 300){
 		    m->auth.expiration = now + 60;
 		}
 	      }
@@ -169,8 +176,11 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
     }
 
     if(!ps_global->mail_stream
-       || !(timeo || force || sp_a_locked_stream_changed() || sp_a_locked_stream_is_dead()))
-      return(-1);
+       || !(timeo || force || sp_a_locked_stream_changed() || sp_a_locked_stream_is_dead())){
+	if(time_for_check_point == GoodTime || force_arg)
+	  folder_unseen_count_updater(UFU_ANNOUNCE | (force_arg ? UFU_FORCE : 0));
+	return(-1);
+    }
 
     last_check_point_call = now;
     since_last_input = (long) now - (long) time_of_last_input();
@@ -534,6 +544,9 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
 	}
     } while(i != started_on);
 
+    if(time_for_check_point == GoodTime || force_arg)
+      folder_unseen_count_updater(UFU_ANNOUNCE | (force_arg ? UFU_FORCE : 0));
+
     /*
      * Current mail box state changed, could be additions or deletions.
      * Also check if we need to do sorting that has been deferred.
@@ -666,14 +679,12 @@ new_mail(int force_arg, CheckPointTime time_for_check_point, int flags)
     if(force_arg)
       ps_global->last_nextitem_forcechk = time(0);
 
-    if(reconnected_status == 1)
-      q_status_message(SM_ORDER, 0, 2, _("Folder connection restored."));
-    else if(reconnected_status == -1)
-      q_status_message(SM_ORDER, 0, 2, _("Folder reconnected and synchronized."));
+    if(reconnected_status != 0)
+      ps_global->mangled_header = 1;
 
     dprint((6, "******** new mail returning %ld  ********\n", 
-	       rv ? rv : (exp_count ? 0 : -1)));
-    return(rv ? rv : (exp_count ? 0 : -1));
+	       rv ? rv : ((exp_count || reconnected_status != 0) ? 0 : -1)));
+    return(rv ? rv : ((exp_count || reconnected_status != 0) ? 0 : -1));
 }
 
 

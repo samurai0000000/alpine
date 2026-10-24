@@ -130,6 +130,7 @@ void http_close (HTTPSTREAM *stream);
 
 HTTP_PARAM_S *http_param_get(int);
 void http_param_free(HTTP_PARAM_S **);
+void http_header_free(HTTP_HEADER_DATA_S **);
 
 void *http_parameters (long,void *);
 

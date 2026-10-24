@@ -150,6 +150,10 @@ long auth_oauth2_client (authchallenge_t challenger,authrespond_t responder, cha
       unsigned long rlen = OAUTH2_USER_LEN + OAUTH2_BEARER_LEN + 2
 			   + strlen(user) + strlen(oauth2.access_token) + 1;
       char *response = (char *) fs_get (rlen + 1);
+      if (stream && (!service || !compare_cstring ((unsigned char *) service,"imap") ||
+		     !compare_cstring ((unsigned char *) service,"pop")) &&
+	  oauth2.expiration > 0)
+	((MAILSTREAM *) stream)->auth.expiration = oauth2.expiration;
       sprintf(response, "%s%s\001%s%s\001\001", OAUTH2_USER, user, OAUTH2_BEARER, oauth2.access_token);
       if ((*responder) (stream,base,response,rlen)) {
 	if ((challenge = (*challenger) (stream,&clen)) != NULL)
@@ -162,8 +166,12 @@ long auth_oauth2_client (authchallenge_t challenger,authrespond_t responder, cha
 	   * Refresh Token has expired somehow, we invalidate it if we
 	   * reach *trial to 3. This forces the process to restart later on.
 	   */
-	  if(*trial == 3)
+	  if(*trial == 3){
 	     oauth2.expiration = 0L;
+	     if (stream && (!service || !compare_cstring ((unsigned char *) service,"imap") ||
+			    !compare_cstring ((unsigned char *) service,"pop")))
+	       ((MAILSTREAM *) stream)->auth.expiration = 0L;
+	  }
 	}
       }
       fs_give ((void **) &response);

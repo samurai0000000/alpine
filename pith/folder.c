@@ -2356,6 +2356,8 @@ update_folder_unseen(FOLDER_S *f, CONTEXT_S *ctxt, unsigned long flags,
 		}
 	    }
 	}
+	else if(use_imap_interval || IS_REMOTE(mailbox_name))
+	  f->last_unseen_update = time(0);	/* retry on next interval */
 	else
 	  f->last_unseen_update = LUU_NOMORECHK;	/* no further checking */
     }
@@ -2547,6 +2549,24 @@ get_recent_in_folder(char *mailbox_name, long unsigned int *new,
     }
 
     /* Let's just Select it. */
+    if(!gotit && IS_REMOTE(mailbox_name)){
+	int i, has_locked_pool_stream = 0;
+	MAILSTREAM *m;
+
+	for(i = 0; i < ps_global->s_pool.nstream; i++){
+	    m = ps_global->s_pool.streams[i];
+	    if(m && sp_flagged(m, SP_LOCKED)
+	       && same_remote_mailboxes(mailbox_name,
+		    m->original_mailbox ? m->original_mailbox : m->mailbox)){
+		has_locked_pool_stream = 1;
+		break;
+	    }
+	}
+
+	if(has_locked_pool_stream)
+	  return(0);
+    }
+
     if(!gotit){
 	long saved_timeout;
 	long openflags;

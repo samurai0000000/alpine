@@ -5821,6 +5821,16 @@ broach_folder(int qline, int allow_list, int *notrealinbox, CONTEXT_S **context)
 		char *name, *fullname = NULL;
 		int   exists, breakout = 0;
 
+		if(!strucmp(newfolder, ps_global->inbox_name)){
+		    if(notrealinbox)
+		      (*notrealinbox) = 0;
+
+		    tc = ps_global->context_list;
+		    save_hist(history, newfolder, 0, tc);
+		    done++;
+		    break;
+		}
+
 		save_hist(history, newfolder, 0, tc);
 
 		if(!(name = folder_is_nick(newfolder, FOLDERS(tc),

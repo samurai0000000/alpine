@@ -132,6 +132,10 @@ long auth_oauthbearer_client (authchallenge_t challenger,authrespond_t responder
       unsigned long rlen;
       char *response;
 
+      if (stream && (!service || !compare_cstring ((unsigned char *) service,"imap") ||
+		     !compare_cstring ((unsigned char *) service,"pop")) &&
+	  oauth2.expiration > 0)
+	((MAILSTREAM *) stream)->auth.expiration = oauth2.expiration;
       sprintf(ports, "%lu", port);
       rlen = BEARER_ACCOUNT_LEN + strlen(user) + 1 + 1
 		+ BEARER_HOST_LEN + strlen(mb->orighost) + 1
@@ -151,8 +155,12 @@ long auth_oauthbearer_client (authchallenge_t challenger,authrespond_t responder
 	   * Refresh Token has expired somehow, we invalidate it if we
 	   * reach *trial to 3. This forces the process to restart later on.
 	   */
-	  if(*trial == 3)
+	  if(*trial == 3){
 	     oauth2.expiration = 0L;
+	     if (stream && (!service || !compare_cstring ((unsigned char *) service,"imap") ||
+			    !compare_cstring ((unsigned char *) service,"pop")))
+	       ((MAILSTREAM *) stream)->auth.expiration = 0L;
+	  }
 	}
       }
       fs_give ((void **) &response);

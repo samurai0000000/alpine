@@ -165,7 +165,8 @@ input_ready(int time_out)
 	      * question for the human is waiting).  Return as a timeout
 	      * does, so no key is eaten and read_command_prep runs.
 	      */
-	     if(input_ready_wake_return && (*input_ready_wake_return)())
+	     if(time_out > 0 && time_out <= IDLE_TIMEOUT
+		&& input_ready_wake_return && (*input_ready_wake_return)())
 	       return(NO_OP_COMMAND);
 
 	     continue;
@@ -300,7 +301,8 @@ input_ready(int time_out)
 	      * question for the human is waiting).  Return as a timeout
 	      * does, so no key is eaten and read_command_prep runs.
 	      */
-	     if(input_ready_wake_return && (*input_ready_wake_return)())
+	     if(time_out > 0 && time_out <= IDLE_TIMEOUT
+		&& input_ready_wake_return && (*input_ready_wake_return)())
 	       return(NO_OP_COMMAND);
 
 	     continue;

@@ -349,6 +349,7 @@ broach_get_folder(CONTEXT_S *context, int *inbox, char **folder)
 	*inbox = (ps_global->cur_folder
 	          && ps_global->inbox_name
 		  && strucmp(ps_global->cur_folder,ps_global->inbox_name) == 0
+		  && !(ps_global->mail_stream && sp_dead_stream(ps_global->mail_stream))
 		  && (!ps_global->context_current
 		      || ps_global->context_current->use & CNTXT_INCMNG
 		      || (!(ps_global->context_list->use & CNTXT_INCMNG)
@@ -535,17 +536,20 @@ do_broach_folder(char *newfolder, CONTEXT_S *new_context, MAILSTREAM **streamp,
 		if(ps_global->mail_stream->dtb
 		   && ps_global->mail_stream->dtb->name
 		   && !strcmp(ps_global->mail_stream->dtb->name, "imap")){
-		    int rc = pine_attempt_reconnect(ps_global->mail_stream);
+		    int rc;
+
+		    sp_reset_reconnect_backoff(ps_global->mail_stream);
+		    rc = pine_attempt_reconnect(ps_global->mail_stream);
 		    if(rc != 0){
-			q_status_message(SM_ORDER, 0, 2,
-					 rc == 1 ? _("Folder connection restored.")
-						 : _("Folder reconnected and synchronized."));
 			ps_global->mangled_header = 1;
 			if(!(flags & DB_NOVISIT))
 			  sp_set_recent_since_visited(ps_global->mail_stream, 0L);
 			return(1);
 		    }
 		    else{
+			q_status_message1(SM_ORDER | SM_DING, 3, 4,
+					  _("Can't reconnect to folder \"%s\"."),
+					  pretty_fn(newfolder));
 			return(-1);
 		    }
 		}
@@ -620,11 +624,11 @@ do_broach_folder(char *newfolder, CONTEXT_S *new_context, MAILSTREAM **streamp,
 	    }
 
 	    if(match){
-		int rc = pine_attempt_reconnect(*cur_stream);
+		int rc;
+
+		sp_reset_reconnect_backoff(*cur_stream);
+		rc = pine_attempt_reconnect(*cur_stream);
 		if(rc != 0){
-		    q_status_message(SM_ORDER, 0, 2,
-				     rc == 1 ? _("Folder connection restored.")
-					     : _("Folder reconnected and synchronized."));
 		    if(stream && stream != *cur_stream){
 			pine_mail_close(stream);
 			stream = NULL;
@@ -639,6 +643,9 @@ do_broach_folder(char *newfolder, CONTEXT_S *new_context, MAILSTREAM **streamp,
 			pine_mail_close(stream);
 			stream = NULL;
 		    }
+		    q_status_message1(SM_ORDER | SM_DING, 3, 4,
+				      _("Can't reconnect to folder \"%s\"."),
+				      pretty_fn(newfolder));
 		    return(-1);
 		}
 	    }
@@ -661,17 +668,18 @@ do_broach_folder(char *newfolder, CONTEXT_S *new_context, MAILSTREAM **streamp,
 	 */
 	dprint((2, "INBOX was dead, closing before reopening\n"));
 	if(strm->dtb && strm->dtb->name && !strcmp(strm->dtb->name, "imap")){
-	    int rc = pine_attempt_reconnect(strm);
-	    if(rc != 0){
-		q_status_message(SM_ORDER, 0, 2,
-				 rc == 1 ? _("Folder connection restored.")
-					 : _("Folder reconnected and synchronized."));
-	    }
+	    sp_reset_reconnect_backoff(strm);
+	    (void) pine_attempt_reconnect(strm);
 	}
 	if(sp_dead_stream(strm)){
-	    if(strm == ps_global->mail_stream)
-	      return(-1);
-	    pine_mail_actually_close(strm);
+	    if(stream && stream != strm){
+		pine_mail_close(stream);
+		stream = NULL;
+	    }
+	    q_status_message1(SM_ORDER | SM_DING, 3, 4,
+			      _("Can't reconnect to folder \"%s\"."),
+			      pretty_fn(newfolder));
+	    return(-1);
 	}
       }
       if(!sp_dead_stream(strm)){
