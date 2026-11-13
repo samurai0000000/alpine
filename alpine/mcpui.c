@@ -26,6 +26,7 @@
 
 #include "headers.h"
 #include "mcpui.h"
+#include "../pith/imap.h"
 #include "../pith/mcp/mcp.h"
 #include "../pith/mcp/mcpconf.h"
 #include "../pico/osdep/read.h"
@@ -63,6 +64,15 @@ mcp_ui_wake_return(void)
 }
 
 
+static int
+mcp_ui_wake_fd(void)
+{
+    if(pine_in_cclient_callback())
+      return(-1);
+    return(mcp_wake_fd());
+}
+
+
 void
 mcp_ui_init(void)
 {
@@ -71,7 +81,7 @@ mcp_ui_init(void)
 
     input_ready_wake_return = mcp_ui_wake_return;
     if(mcp_server_running()){
-	input_ready_wake_fd = mcp_wake_fd;
+	input_ready_wake_fd = mcp_ui_wake_fd;
 	input_ready_wake_run = mcp_ui_drain;
     }
     input_ready_timer_check = mcp_titlebar_spin_check;
@@ -117,17 +127,48 @@ mcp_ui_confirm(void)
 }
 
 
+#define MCP_DRAIN_IO_TIMEOUT_MAX 10L
+
+
 void
 mcp_ui_drain(void)
 {
+    long open_tmo, read_tmo, write_tmo;
+    long clamped_open, clamped_read, clamped_write;
+    int saved_query_tmo = 0, clamped_query = 0;
 #if	defined(SIGWINCH) && defined(TIOCGWINSZ)
     int armed = ready_for_winch;
 
     ready_for_winch = 0;
 #endif
 
+    open_tmo  = (long) mail_parameters(NULL, GET_OPENTIMEOUT, NULL);
+    read_tmo  = (long) mail_parameters(NULL, GET_READTIMEOUT, NULL);
+    write_tmo = (long) mail_parameters(NULL, GET_WRITETIMEOUT, NULL);
+
+    clamped_open  = (open_tmo <= 0L || open_tmo > MCP_DRAIN_IO_TIMEOUT_MAX) ? MCP_DRAIN_IO_TIMEOUT_MAX : open_tmo;
+    clamped_read  = (read_tmo <= 0L || read_tmo > MCP_DRAIN_IO_TIMEOUT_MAX) ? MCP_DRAIN_IO_TIMEOUT_MAX : read_tmo;
+    clamped_write = (write_tmo <= 0L || write_tmo > MCP_DRAIN_IO_TIMEOUT_MAX) ? MCP_DRAIN_IO_TIMEOUT_MAX : write_tmo;
+
+    mail_parameters(NULL, SET_OPENTIMEOUT, (void *) clamped_open);
+    mail_parameters(NULL, SET_READTIMEOUT, (void *) clamped_read);
+    mail_parameters(NULL, SET_WRITETIMEOUT, (void *) clamped_write);
+
+    if(ps_global){
+        saved_query_tmo = ps_global->tcp_query_timeout;
+        clamped_query = (saved_query_tmo <= 0 || saved_query_tmo > (int)MCP_DRAIN_IO_TIMEOUT_MAX)
+                        ? (int)MCP_DRAIN_IO_TIMEOUT_MAX : saved_query_tmo;
+        ps_global->tcp_query_timeout = clamped_query;
+    }
+
     if(mcp_drain() > 0)
       mcp_titlebar_record_activity();
+
+    mail_parameters(NULL, SET_OPENTIMEOUT, (void *) open_tmo);
+    mail_parameters(NULL, SET_READTIMEOUT, (void *) read_tmo);
+    mail_parameters(NULL, SET_WRITETIMEOUT, (void *) write_tmo);
+    if(ps_global)
+      ps_global->tcp_query_timeout = saved_query_tmo;
 
 #if	defined(SIGWINCH) && defined(TIOCGWINSZ)
     ready_for_winch = armed;

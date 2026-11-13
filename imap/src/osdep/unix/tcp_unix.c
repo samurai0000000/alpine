@@ -35,6 +35,7 @@
  
 static tcptimeout_t tmoh = NIL;	/* TCP timeout handler routine */
 static long ttmo_open = 0;	/* TCP timeouts, in seconds */
+static time_t tcp_last_open_deadline = 0;
 static long ttmo_read = 0;
 static long ttmo_write = 0;
 static long rshtimeout = 15;	/* rsh timeout */
@@ -56,6 +57,9 @@ extern long maxposint;		/* get this from write.c */
 
 /* Local function prototypes */
 
+static int tcp_socket_open_tmo (int family,void *adr,size_t adrlen,
+				unsigned short port,char *tmp,int *ctr,
+				char *hst,long tmo_secs);
 int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
 		     char *tmp,int *ctr,char *hst);
 static char *tcp_getline_work (TCPSTREAM *stream,unsigned long *size,
@@ -166,6 +170,8 @@ TCPSTREAM *tcp_open (char *host,char *service,unsigned long port)
   struct servent *sv = NIL;
   blocknotify_t bn = (blocknotify_t) mail_parameters (NIL,GET_BLOCKNOTIFY,NIL);
   void *data,*next;
+  time_t deadline = (ttmo_open > 0) ? (time (0) + ttmo_open) : 0;
+  tcp_last_open_deadline = deadline;
   port &= 0xffff;		/* erase flags */
 				/* lookup service */
   if (service && (sv = getservbyname (service,"tcp")))
@@ -180,8 +186,8 @@ TCPSTREAM *tcp_open (char *host,char *service,unsigned long port)
     if ((adr = ip_stringtoaddr (tmp,&adrlen,&family)) != NULL) {
       (*bn) (BLOCK_TCPOPEN,NIL);
 				/* get an open socket for this system */
-      sock = tcp_socket_open (family,adr,adrlen,port,tmp,ctrp,
-			      hostname = cpystr(host));
+      sock = tcp_socket_open_tmo (family,adr,adrlen,port,tmp,ctrp,
+				  hostname = cpystr(host),ttmo_open);
       (*bn) (BLOCK_NONE,NIL);
       fs_give ((void **) &adr);
     }
@@ -202,9 +208,27 @@ TCPSTREAM *tcp_open (char *host,char *service,unsigned long port)
     if (s) {			/* DNS resolution won? */
       if (tcpdebug) mm_log ("DNS resolution done",TCPDEBUG);
       do {
+	long attempt_tmo = ttmo_open;
+	if (deadline > 0) {
+	  time_t now = time (0);
+	  if (now >= deadline) {
+	    errno = ETIMEDOUT;
+	    sprintf (tmp,"Connection failed to %.80s,%lu: %s",
+		     hostname ? hostname : host,(unsigned long) port,
+		     strerror (ETIMEDOUT));
+	    break;
+	  }
+	  attempt_tmo = (long) (deadline - now);
+	  if (next != NIL && attempt_tmo > 5) {
+	    long slice = (attempt_tmo + 1) / 2;
+	    if (slice > 10) slice = 10;
+	    if (slice < 2) slice = 2;
+	    attempt_tmo = slice;
+	  }
+	}
 	(*bn) (BLOCK_TCPOPEN,NIL);
-	if (((sock = tcp_socket_open (family,s,adrlen,port,tmp,ctrp,
-				      hostname)) < 0) &&
+	if (((sock = tcp_socket_open_tmo (family,s,adrlen,port,tmp,ctrp,
+					  hostname,attempt_tmo)) < 0) &&
 	    (s = ip_nametoaddr (NIL,&adrlen,&family,&hostname,&next,
 				&cleanup)) && !silent)
 	  mm_log (tmp,WARN);
@@ -231,7 +255,7 @@ TCPSTREAM *tcp_open (char *host,char *service,unsigned long port)
   return stream;		/* return success */
 }
 
-/* Open a TCP socket
+/* Open a TCP socket with bounded timeout
  * Accepts: protocol family
  *	    address to connect to
  *	    address length
@@ -239,11 +263,13 @@ TCPSTREAM *tcp_open (char *host,char *service,unsigned long port)
  *	    scratch buffer
  *	    pointer to "first byte read in" storage or NIL
  *	    host name for error message
+ *	    timeout in seconds
  * Returns: socket if success, else -1 with error string in scratch buffer
  */
 
-int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
-		     char *tmp,int *ctr,char *hst)
+static int tcp_socket_open_tmo (int family,void *adr,size_t adrlen,
+				unsigned short port,char *tmp,int *ctr,
+				char *hst,long tmo_secs)
 {
   int i,ti,sock,flgs;
   size_t len;
@@ -255,6 +281,7 @@ int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
   blocknotify_t bn = (blocknotify_t) mail_parameters (NIL,GET_BLOCKNOTIFY,NIL);
 				/* fetid Solaris */
   void *data = (*bn) (BLOCK_SENSITIVE,NIL);
+  if (ctr) *ctr = 0;
   sprintf (tmp,"Trying IP address [%s]",ip_sockaddrtostring (sadr,buf));
   mm_log (tmp,NIL);
 				/* make a socket */
@@ -290,7 +317,7 @@ int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
     }
     flgs = fcntl (sock,F_GETFL,0);
 				/* set non-blocking if want open timeout */
-    if (ctr) fcntl (sock,F_SETFL,flgs | FNDELAY);
+    if (tmo_secs > 0) fcntl (sock,F_SETFL,flgs | FNDELAY);
 				/* open connection */
     while ((i = connect (sock,sadr,len)) < 0 && (errno == EINTR));
     (*bn) (BLOCK_NONSENSITIVE,data);
@@ -307,35 +334,52 @@ int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
       close (sock);		/* flush socket */
       sock = -1;
     }
-    if ((sock >= 0) && ctr) {	/* want open timeout? */
-      now = time (0);		/* open timeout */
-      ti = ttmo_open ? now + ttmo_open : 0;
-      tmo.tv_usec = 0;
-      FD_ZERO (&rfds);		/* initialize selection vector */
-      FD_ZERO (&wfds);
-      FD_ZERO (&efds);		/* handle errors too */
-      FD_SET (sock,&rfds);	/* block for readable, writeable, or error */
-      FD_SET (sock,&wfds);
-      FD_SET (sock,&efds);
-      do {			/* block under timeout */
-	tmo.tv_sec = ti ? ti - now : 0;
-	i = select (sock+1,&rfds,&wfds,&efds,ti ? &tmo : NIL);
-	now = time (0);		/* fake timeout if interrupt & time expired */
-	if ((i < 0) && (errno == EINTR) && ti && (ti <= now)) i = 0;
-      } while ((i < 0) && (errno == EINTR));
-      if (i > 0) {		/* success, make sure really connected */
+    if (sock >= 0) {
+      if (tmo_secs > 0) {	/* want open timeout? */
+	if (i < 0) {
+	  now = time (0);	/* open timeout */
+	  ti = now + tmo_secs;
+	  tmo.tv_usec = 0;
+	  do {			/* block under timeout */
+	    FD_ZERO (&rfds);	/* initialize selection vector */
+	    FD_ZERO (&wfds);
+	    FD_ZERO (&efds);	/* handle errors too */
+	    FD_SET (sock,&rfds);/* block for readable, writeable, or error */
+	    FD_SET (sock,&wfds);
+	    FD_SET (sock,&efds);
+	    tmo.tv_sec = (ti > now) ? (ti - now) : 0;
+	    i = select (sock+1,&rfds,&wfds,&efds,&tmo);
+	    now = time (0);	/* fake timeout if interrupt & time expired */
+	    if ((i < 0) && (errno == EINTR) && (ti <= now)) i = 0;
+	  } while ((i < 0) && (errno == EINTR));
+	}
+	else {
+	  i = 1;		/* immediate connect */
+	}
 				/* restore blocking status */
 	fcntl (sock,F_SETFL,flgs);
-	/* This used to be a zero-byte read(), but that crashes Solaris */
-				/* get socket status */
-	if(FD_ISSET(sock,&rfds))
-	   while (((i = *ctr = read (sock,tmp,1)) < 0) && (errno == EINTR));
-      }	
-      if (i <= 0) {		/* timeout or error? */
-	i = i ? errno : ETIMEDOUT;/* determine error code */
-	close (sock);		/* flush socket */
+	if (i > 0) {		/* check async connect completion */
+	  int sockerr = 0;
+	  socklen_t elen = sizeof (sockerr);
+	  if (getsockopt (sock,SOL_SOCKET,SO_ERROR,(void *) &sockerr,&elen) < 0)
+	    sockerr = errno;
+	  if (sockerr) {
+	    errno = sockerr;
+	    i = -1;
+	  }
+	}
+	if (i <= 0) {		/* timeout or error? */
+	  i = i ? errno : ETIMEDOUT;/* determine error code */
+	  close (sock);		/* flush socket */
+	  sock = -1;
+	  errno = i;		/* return error code */
+	  sprintf (tmp,"Connection failed to %.80s,%lu: %s",hst,
+		   (unsigned long) port,strerror (errno));
+	}
+      }
+      else if (i < 0) {
+	close (sock);
 	sock = -1;
-	errno = i;		/* return error code */
 	sprintf (tmp,"Connection failed to %.80s,%lu: %s",hst,
 		 (unsigned long) port,strerror (errno));
       }
@@ -343,6 +387,24 @@ int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
   }
   fs_give ((void **) &sadr);
   return sock;			/* return the socket */
+}
+
+
+/* Open a TCP socket
+ * Accepts: protocol family
+ *	    address to connect to
+ *	    address length
+ *	    port
+ *	    scratch buffer
+ *	    pointer to "first byte read in" storage or NIL
+ *	    host name for error message
+ * Returns: socket if success, else -1 with error string in scratch buffer
+ */
+
+int tcp_socket_open (int family,void *adr,size_t adrlen,unsigned short port,
+		     char *tmp,int *ctr,char *hst)
+{
+  return tcp_socket_open_tmo (family,adr,adrlen,port,tmp,ctr,hst,ttmo_open);
 }
   
 /* TCP/IP authenticated open

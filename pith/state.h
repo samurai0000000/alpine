@@ -195,6 +195,8 @@ struct pine {
     unsigned     noshow_error:1;	/* c-client error callback controls */
     unsigned     noshow_warn:1;
     unsigned	 noshow_timeout:1;
+    unsigned     non_interactive:1;      /* background check: never prompt */
+    unsigned     in_startup_open:1;      /* startup folder open: bound stall */
     unsigned	 conceal_sensitive_debugging:1;
     unsigned	 turn_off_threading_temporarily:1;
     unsigned	 view_skipped_index:1;

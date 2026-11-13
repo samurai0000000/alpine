@@ -137,6 +137,8 @@ void	imap_delete_passwd (MMLOGIN_S **, char *, STRLIST_S *, int);
 
 /* currently mandatory to implement stubs */
 
+int     pine_in_cclient_callback(void);
+
 /* called by build_folder_list(), ok if it does nothing */
 void    set_read_predicted(int);
 void    mm_login_work (NETMBX *mb,char *user,char **pwd,long trial,char *usethisprompt, char *altuserforcache);

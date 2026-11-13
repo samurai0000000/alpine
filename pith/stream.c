@@ -2073,7 +2073,7 @@ pine_mail_list(MAILSTREAM *stream, char *ref, char *pat, unsigned int *options)
 	}
 
 	mail_list_internal(stream, ref, pat);
-	if(stream && (sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	if(!ourstream && stream && (sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
 	    sp_set_dead_stream(stream, 1);
 	    if(pine_attempt_reconnect(stream) != 0)
 	      mail_list_internal(stream, ref, pat);
@@ -2092,8 +2092,15 @@ pine_mail_list(MAILSTREAM *stream, char *ref, char *pat, unsigned int *options)
 	}
     }
     
-    if(ourstream)
+    if(ourstream){
+      int dead = (sp_dead_stream(ourstream) || ourstream->unhealthy);
       pine_mail_close(ourstream);
+      if(dead)
+        return(FALSE);
+    }
+    else if(stream && (sp_dead_stream(stream) || stream->unhealthy)){
+      return(FALSE);
+    }
 
     return(TRUE);
 }
@@ -2135,6 +2142,8 @@ pine_mail_status_full(MAILSTREAM *stream, char *mailbox, long int flags,
     long        ret = NIL;
     MAILSTATUS  cache, status;
     MAILSTREAM *ourstream = NULL;
+    int         source_open_failed = 0;
+    int         imap_open_failed = 0;
 
     if(check_for_move_mbox(mailbox, source, sizeof(source), &target)){
 	memset(&status, 0, sizeof(status));
@@ -2169,6 +2178,8 @@ pine_mail_status_full(MAILSTREAM *stream, char *mailbox, long int flags,
 		      openflags |= OP_TRYALT;
 
 		    stream = pine_mail_open(NULL, source, openflags, NULL);
+		    if(!stream)
+		      source_open_failed = 1;
 		    ourstream = stream;
 		}
 		else if(F_ON(F_ENABLE_MULNEWSRCS, ps_global)
@@ -2178,7 +2189,7 @@ pine_mail_status_full(MAILSTREAM *stream, char *mailbox, long int flags,
 
 	    }
 
-	    if(!ps_global->user_says_cancel && mail_status(stream, source, flags)){
+	    if(!source_open_failed && !ps_global->user_says_cancel && mail_status(stream, source, flags)){
 		DRIVER *d;
 		int     is_news = 0;
 
@@ -2370,6 +2381,8 @@ pine_mail_status_full(MAILSTREAM *stream, char *mailbox, long int flags,
 
 		if(!stream){
 		    stream = pine_mail_open(NULL, mailbox, openflags, NULL);
+		    if(!stream)
+		      imap_open_failed = 1;
 		    ourstream = stream;
 		}
 	    }
@@ -2379,14 +2392,14 @@ pine_mail_status_full(MAILSTREAM *stream, char *mailbox, long int flags,
 	      flags |= SA_MULNEWSRC;
 	}
 
-	if(!ps_global->user_says_cancel){
-	    if(stream && (sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
+	if(!imap_open_failed && !ps_global->user_says_cancel){
+	    if(!ourstream && stream && (sp_dead_stream(stream) || stream->unhealthy) && is_imap_stream(stream)){
 		sp_set_dead_stream(stream, 1);
 		pine_attempt_reconnect(stream);
 	    }
 
 	    ret = mail_status(stream, mailbox, flags);	/* non #move case */
-	    if((!ret || (stream && (sp_dead_stream(stream) || stream->unhealthy)))
+	    if(!ourstream && (!ret || (stream && (sp_dead_stream(stream) || stream->unhealthy)))
 	       && stream && is_imap_stream(stream)){
 		sp_set_dead_stream(stream, 1);
 		if(pine_attempt_reconnect(stream) != 0)

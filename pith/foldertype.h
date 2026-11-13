@@ -54,6 +54,8 @@ typedef struct folder {
     unsigned long   new;			/* for monitoring unseen      */
     unsigned long   total;			/* for monitoring unseen      */
     time_t          last_unseen_update;		/* see LUU_ constants below   */
+    unsigned        unseen_fail_count;  /* consecutive remote check failures */
+    time_t          unseen_next_retry;  /* earliest next background retry    */
     char	    name[1];			/* folder's name              */
 } FOLDER_S;
 

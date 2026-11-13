@@ -134,6 +134,14 @@ int   init_wincred_funcs(void);
 #endif	/* WINCRED */
 
 
+static int s_cclient_cb_depth = 0;
+
+int
+pine_in_cclient_callback(void)
+{
+    return(s_cclient_cb_depth > 0);
+}
+
 static	char *details_cert, *details_host, *details_reason;
 
 extern XOAUTH2_INFO_S xoauth_default[];
@@ -1574,13 +1582,16 @@ mm_login_method_work(NETMBX *mb, char *user, void *login, long int trial,
 {
    if(method == NULL)
       return;
-   if(strucmp(method, OA2NAME) == 0 || strucmp(method, BEARERNAME) == 0)
+   if(strucmp(method, OA2NAME) == 0 || strucmp(method, BEARERNAME) == 0){
+     s_cclient_cb_depth++;
      mm_login_oauth2(mb, user, method, (OAUTH2_S *) login, trial, usethisprompt, altuserforcache);
+     s_cclient_cb_depth--;
+   }
 }
 
-void
-mm_login_work(NETMBX *mb, char *user, char **pwd, long int trial,
-	      char *usethisprompt, char *altuserforcache)
+static void
+mm_login_work_inner(NETMBX *mb, char *user, char **pwd, long int trial,
+	            char *usethisprompt, char *altuserforcache)
 {
     char      tmp[MAILTMPLEN];
     char      prompt[1000], *last;
@@ -2313,6 +2324,15 @@ mm_login_alt_cue(NETMBX *mb)
     }
 }
 
+void
+mm_login_work(NETMBX *mb, char *user, char **pwd, long int trial,
+	      char *usethisprompt, char *altuserforcache)
+{
+    s_cclient_cb_depth++;
+    mm_login_work_inner(mb, user, pwd, trial, usethisprompt, altuserforcache);
+    s_cclient_cb_depth--;
+}
+
 
 /*----------------------------------------------------------------------
        Receive notification of an error writing to disk
@@ -2480,15 +2500,31 @@ pine_tcptimeout_noscreen(long int elapsed, long int sincelast, char *host)
     mswin_killsplash();
 #endif
 
+    if(mcp_noninteractive() || pine_in_background_reconnect() || (ps_global && (ps_global->non_interactive || ps_global->in_init_seq || ps_global->in_startup_open))){
+	if(ps_global)
+	  ps_global->tcptimeout = 0;
+	if(elapsed >= (long)ps_global->tcp_query_timeout){
+	    if(mcp_noninteractive())
+	      mcp_note_cclient_msg("no reply from server; connection broken",
+				   ERROR);
+	    return(0L);
+	}
+
+	return(rv);
+    }
+
     if(elapsed >= (long)ps_global->tcp_query_timeout){
 	snprintf(pmt, sizeof(pmt),
 	 _("No reply in %s seconds from server %s. Break connection"),
 		long2string(elapsed), host);
 	pmt[sizeof(pmt)-1] = '\0';
+	s_cclient_cb_depth++;
 	if(want_to(pmt, 'n', 'n', NO_HELP, WT_FLUSH_IN) == 'y'){
+	  s_cclient_cb_depth--;
 	  ps_global->user_says_cancel = 1;
 	  return(0L);
 	}
+	s_cclient_cb_depth--;
     }
 
     ps_global->tcptimeout = 0;
@@ -2527,8 +2563,9 @@ pine_tcptimeout(long int elapsed, long int sincelast, char *host)
     if(ps_global->noshow_timeout)
       return(rv);
 
-    if(mcp_noninteractive() || pine_in_background_reconnect()){	/* MCP or background reconnect: never prompt */
-	ps_global->tcptimeout = 0;
+    if(mcp_noninteractive() || pine_in_background_reconnect() || (ps_global && (ps_global->non_interactive || ps_global->in_init_seq || ps_global->in_startup_open))){	/* MCP or background reconnect or non-interactive: never prompt */
+	if(ps_global)
+	  ps_global->tcptimeout = 0;
 	if(elapsed >= (long)ps_global->tcp_query_timeout){
 	    if(mcp_noninteractive())
 	      mcp_note_cclient_msg("no reply from server; connection broken",
@@ -2573,11 +2610,18 @@ pine_tcptimeout(long int elapsed, long int sincelast, char *host)
 	CleartoEOLN();
 	fflush(stdout);
 	flush_input();
+	s_cclient_cb_depth++;
 	ch = read_char(7);
+	s_cclient_cb_depth--;
 	if(ps_global->read_bail || ch == 'y' || ch == 'Y'){
 	  ps_global->read_bail = 0;
 	  ps_global->user_says_cancel = 1;
 	  rv = 0L;
+	}
+	else if(mcp_enabled() && (ch == NO_OP_COMMAND || ch == NO_OP_IDLE || ch == BAIL_OUT)){
+	  rv = 0L;
+	  q_status_message1(SM_ORDER, 0, 3,
+	    _("No reply from server %s; connection closed"), host);
 	}
 
 	if(clear_inverse)
@@ -2669,9 +2713,10 @@ pine_sslcertquery(char *reason, char *host, char *cert)
 	dprint((1, "sslcertificatequery: we were asked before and said No, so ask again\n"));
     }
 
-    if(mcp_noninteractive()){	/* MCP tool running: only the human approves */
-	mcp_note_cclient_msg("server certificate not approved; open this host on the Alpine screen first",
-			     ERROR);
+    if(mcp_noninteractive() || pine_in_background_reconnect() || (ps_global && ps_global->non_interactive)){	/* MCP or background reconnect: only human approves */
+	if(mcp_noninteractive())
+	  mcp_note_cclient_msg("server certificate not approved; open this host on the Alpine screen first",
+			       ERROR);
 	return(0L);
     }
 
@@ -2772,7 +2817,9 @@ pine_sslcertquery(char *reason, char *host, char *cert)
 	sargs.help.text     = h_tls_validation_failure;
 	sargs.help.title    = _("HELP FOR CERT VALIDATION FAILURE");
 
+	s_cclient_cb_depth++;
 	scrolltool(&sargs);
+	s_cclient_cb_depth--;
 
 	if(the_answer == 'y')
 	  rv++;
@@ -2804,8 +2851,10 @@ try_wantto:
 	tmp[sizeof(tmp)-1] = '\0';
 	strncat(tmp, _(": Continue anyway "), sizeof(tmp)-strlen(tmp)-1);
 
+	s_cclient_cb_depth++;
 	if(want_to(tmp, 'n', 'x', NO_HELP, WT_NORM) == 'y')
 	  rv++;
+	s_cclient_cb_depth--;
     }
 
     if(rv == 0)
@@ -2912,10 +2961,12 @@ pine_sslfailure(char *host, char *reason, long unsigned int flags)
     if(flags & NET_SILENT)
       return;
 
-    if(mcp_noninteractive()){	/* MCP tool running: never paint */
-	snprintf(buf, sizeof(buf), "SSL/TLS failure for %s: %s", hst, rsn);
-	buf[sizeof(buf)-1] = '\0';
-	mcp_note_cclient_msg(buf, ERROR);
+    if(mcp_noninteractive() || pine_in_background_reconnect() || (ps_global && ps_global->non_interactive)){	/* MCP or background reconnect: never paint */
+	if(mcp_noninteractive()){
+	    snprintf(buf, sizeof(buf), "SSL/TLS failure for %s: %s", hst, rsn);
+	    buf[sizeof(buf)-1] = '\0';
+	    mcp_note_cclient_msg(buf, ERROR);
+	}
 	return;
     }
 
@@ -3081,8 +3132,11 @@ pine_sslfailure(char *host, char *reason, long unsigned int flags)
     sargs.help.text     = h_tls_failure;
     sargs.help.title    = _("HELP FOR TLS/SSL FAILURE");
 
-    if(ps_global->ttyo)
+    if(ps_global->ttyo){
+      s_cclient_cb_depth++;
       scrolltool(&sargs);
+      s_cclient_cb_depth--;
+    }
     else{
 	char **q, **qp;
 	char  *p;

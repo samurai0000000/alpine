@@ -692,6 +692,9 @@ init_incoming_unseen_data(struct pine *ps, FOLDER_S *f)
     if(!f)
       return;
 
+    f->unseen_fail_count = 0;
+    f->unseen_next_retry = 0;
+
     /* see if this folder is in the monitoring list */
     if(F_ON(F_ENABLE_INCOMING_CHECKING, ps)){
 	if(!ps->VAR_INCCHECKLIST)
@@ -2270,6 +2273,9 @@ update_folder_unseen(FOLDER_S *f, CONTEXT_S *ctxt, unsigned long flags,
 	}
     }
 
+    if(!(flags & UFU_FORCE) && !stream_is_open && IS_REMOTE(mailbox_name) && f->unseen_next_retry > now)
+      return;
+
     /*
      * Update if forced, or if it's been a while, or if we have a
      * stream open to this mailbox already.
@@ -2297,69 +2303,97 @@ update_folder_unseen(FOLDER_S *f, CONTEXT_S *ctxt, unsigned long flags,
 
 	f->unseen_valid = 0;
 
-	dprint((9, "update_folder_unseen(%s)", FLDR_NAME(f)));
-	if(get_recent_in_folder(mailbox_name, newp, unsp, totp, this_is_the_stream)){
-	    f->last_unseen_update = time(0);
-	    f->unseen_valid = 1;
-	    if(unsp)
-	      f->unseen = uns;
+	{
+	    unsigned saved_non_interactive = ps_global ? ps_global->non_interactive : 0;
 
-	    if(newp)
-	      f->new = new;
+	    if(!(flags & UFU_FORCE) && ps_global)
+	      ps_global->non_interactive = 1;
 
-	    if(totp)
-	      f->total = tot;
+	    dprint((9, "update_folder_unseen(%s)", FLDR_NAME(f)));
+	    if(get_recent_in_folder(mailbox_name, newp, unsp, totp, this_is_the_stream)){
+		if(ps_global)
+		  ps_global->non_interactive = saved_non_interactive;
 
-	    if(!orig_valid){
-		dprint((9, "update_folder_unseen(%s): original: %s%s%s%s",
-		    FLDR_NAME(f),
-		    F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? "new=" : "unseen=",
-		    F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? comatose(f->new) : comatose(f->unseen),
-		    F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? " tot=" : "",
-		    F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? comatose(f->total) : ""));
-	    }
+		f->unseen_fail_count = 0;
+		f->unseen_next_retry = 0;
+		f->last_unseen_update = time(0);
+		f->unseen_valid = 1;
+		if(unsp)
+		  f->unseen = uns;
 
-	    if(orig_valid
-	       && ((F_ON(F_INCOMING_CHECKING_RECENT, ps_global)
-		    && orig_new != f->new)
-		   ||
-	           (F_OFF(F_INCOMING_CHECKING_RECENT, ps_global)
-		    && orig_unseen != f->unseen)
-		   ||
-	           (F_ON(F_INCOMING_CHECKING_TOTAL, ps_global)
-		    && orig_tot != f->total))){
+		if(newp)
+		  f->new = new;
 
-		if(ps_global->in_folder_screen)
-		  ps_global->noticed_change_in_unseen = 1;
+		if(totp)
+		  f->total = tot;
 
-		dprint((9, "update_folder_unseen(%s): changed: %s%s%s%s",
-		    FLDR_NAME(f),
-		    F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? "new=" : "unseen=",
-		    F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? comatose(f->new) : comatose(f->unseen),
-		    F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? " tot=" : "",
-		    F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? comatose(f->total) : ""));
+		if(!orig_valid){
+		    dprint((9, "update_folder_unseen(%s): original: %s%s%s%s",
+			FLDR_NAME(f),
+			F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? "new=" : "unseen=",
+			F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? comatose(f->new) : comatose(f->unseen),
+			F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? " tot=" : "",
+			F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? comatose(f->total) : ""));
+		}
 
-		if(flags & UFU_ANNOUNCE
-		   && ((F_ON(F_INCOMING_CHECKING_RECENT, ps_global)
-			&& orig_new < f->new)
-		       ||
-		       (F_OFF(F_INCOMING_CHECKING_RECENT, ps_global)
-			&& orig_unseen < f->unseen))){
-		    if(F_ON(F_INCOMING_CHECKING_RECENT, ps_global))
-		      q_status_message3(SM_ASYNC, 1, 3, "%s: %s %s",
-					FLDR_NAME(f), comatose(f->new),
-					_("new"));
-		    else
-		      q_status_message3(SM_ASYNC, 1, 3, "%s: %s %s",
-					FLDR_NAME(f), comatose(f->unseen),
-					_("unseen"));
+		if(((flags & UFU_FORCE) && !orig_valid && ps_global->in_folder_screen)
+		   || (orig_valid
+		       && ((F_ON(F_INCOMING_CHECKING_RECENT, ps_global)
+			    && orig_new != f->new)
+			   ||
+		           (F_OFF(F_INCOMING_CHECKING_RECENT, ps_global)
+			    && orig_unseen != f->unseen)
+			   ||
+		           (F_ON(F_INCOMING_CHECKING_TOTAL, ps_global)
+			    && orig_tot != f->total)))){
+
+		    if(ps_global->in_folder_screen)
+		      ps_global->noticed_change_in_unseen = 1;
+
+		    dprint((9, "update_folder_unseen(%s): changed: %s%s%s%s",
+			FLDR_NAME(f),
+			F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? "new=" : "unseen=",
+			F_ON(F_INCOMING_CHECKING_RECENT,ps_global) ? comatose(f->new) : comatose(f->unseen),
+			F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? " tot=" : "",
+			F_ON(F_INCOMING_CHECKING_TOTAL,ps_global) ? comatose(f->total) : ""));
+
+		    if(flags & UFU_ANNOUNCE
+		       && ((F_ON(F_INCOMING_CHECKING_RECENT, ps_global)
+			    && orig_new < f->new)
+			   ||
+			   (F_OFF(F_INCOMING_CHECKING_RECENT, ps_global)
+			    && orig_unseen < f->unseen))){
+			if(F_ON(F_INCOMING_CHECKING_RECENT, ps_global))
+			  q_status_message3(SM_ASYNC, 1, 3, "%s: %s %s",
+					    FLDR_NAME(f), comatose(f->new),
+					    _("new"));
+			else
+			  q_status_message3(SM_ASYNC, 1, 3, "%s: %s %s",
+					    FLDR_NAME(f), comatose(f->unseen),
+					    _("unseen"));
+		    }
 		}
 	    }
+	    else{
+		if(ps_global)
+		  ps_global->non_interactive = saved_non_interactive;
+
+		if(use_imap_interval || IS_REMOTE(mailbox_name)){
+		    f->last_unseen_update = time(0);	/* retry on next interval */
+		    if(IS_REMOTE(mailbox_name)){
+			static const int backoff_tbl[] = { 15, 30, 60, 120, 300 };
+			int idx;
+			f->unseen_fail_count++;
+			idx = (int)(f->unseen_fail_count - 1);
+			if(idx > 4)
+			  idx = 4;
+			f->unseen_next_retry = f->last_unseen_update + backoff_tbl[idx];
+		    }
+		}
+		else
+		  f->last_unseen_update = LUU_NOMORECHK;	/* no further checking */
+	    }
 	}
-	else if(use_imap_interval || IS_REMOTE(mailbox_name))
-	  f->last_unseen_update = time(0);	/* retry on next interval */
-	else
-	  f->last_unseen_update = LUU_NOMORECHK;	/* no further checking */
     }
 }
 
@@ -2395,6 +2429,8 @@ update_folder_unseen_by_stream(MAILSTREAM *strm, unsigned long flags)
 	if(f->last_unseen_update == LUU_NOMORECHK)
 	  init_incoming_unseen_data(ps_global, f);
 
+	f->unseen_fail_count = 0;
+	f->unseen_next_retry = 0;
 	update_folder_unseen(f, ctxt, flags, strm);
 	return;
       }

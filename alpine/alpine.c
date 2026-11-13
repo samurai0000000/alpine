@@ -1288,6 +1288,14 @@ main(int argc, char **argv)
 	    }
 	}
 	else if(args.action == aaFolder){
+	    long saved_open_tmo = (long) mail_parameters(NULL, GET_OPENTIMEOUT, NULL);
+	    int  clamped_open_tmo = 0;
+
+	    if(!pine_state->VAR_TCPOPENTIMEO && (saved_open_tmo <= 0L || saved_open_tmo > 15L)){
+		mail_parameters(NULL, SET_OPENTIMEOUT, (void *) 15L);
+		clamped_open_tmo = 1;
+	    }
+	    pine_state->in_startup_open = 1;
 #ifdef _WINDOWS
             /*
 	     * need to ask for the inbox name if no default under DOS
@@ -1371,6 +1379,10 @@ main(int argc, char **argv)
 	    /* open inbox */
             do_broach_folder(pine_state->inbox_name,
 			     pine_state->context_list, NULL, DB_INBOXWOCNTXT);
+
+	    pine_state->in_startup_open = 0;
+	    if(clamped_open_tmo)
+	      mail_parameters(NULL, SET_OPENTIMEOUT, (void *) saved_open_tmo);
         }
 
         if(pine_state->mangled_footer)

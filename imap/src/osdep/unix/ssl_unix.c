@@ -69,7 +69,13 @@ typedef struct ssl_stream {
   int ictr;			/* input counter */
   char *iptr;			/* input pointer */
   char ibuf[SSLBUFLEN];		/* input buffer */
+  int handshake_done;		/* 1 once SSL_connect succeeded */
+  int io_failed;		/* 1 on timeout or I/O error; skip SSL_shutdown */
+  int net_failed;		/* 1 on transport timeout/EOF/reset; log via mm_log, not (*sf) */
 } SSLSTREAM;
+
+static time_t ssl_active_open_deadline = 0;
+static time_t ssl_verify_paused = 0;
 
 #include "sslio.h"
 
@@ -195,7 +201,14 @@ void ssl_onceonlyinit (void)
 SSLSTREAM *ssl_open (char *host,char *service,unsigned long port)
 {
   TCPSTREAM *stream = tcp_open (host,service,port);
-  return stream ? ssl_start (stream,host,port) : NIL;
+  time_t deadline = tcp_last_open_deadline;
+  SSLSTREAM *ret;
+  tcp_last_open_deadline = 0;
+  if (!stream) return NIL;
+  ssl_active_open_deadline = deadline;
+  ret = ssl_start (stream,host,port);
+  ssl_active_open_deadline = 0;
+  return ret;
 }
 
 
@@ -346,6 +359,7 @@ static SSLSTREAM *ssl_start (TCPSTREAM *tstream,char *host,unsigned long flags)
   reason = ssl_start_work (stream,host,flags);
   (*bn) (BLOCK_NONSENSITIVE,data);
   if (reason) {			/* failed? */
+    int net_failed = stream->net_failed;
     ssl_close (stream);		/* failed to do SSL */
     stream = NIL;		/* no stream returned */
     switch (*reason) {		/* analyze reason */
@@ -357,6 +371,7 @@ static SSLSTREAM *ssl_start (TCPSTREAM *tstream,char *host,unsigned long flags)
 	sprintf (tmp,"Certificate failure for %.80s: %.512s",host,reason);
 	mm_log (tmp,ERROR);
       }
+      break;
     case '\0':			/* user answered no to certificate callback */
       if (flags & NET_TRYSSL)	/* return dummy stream to stop tryssl */
 	stream = (SSLSTREAM *) memset (fs_get (sizeof (SSLSTREAM)),0,
@@ -364,7 +379,12 @@ static SSLSTREAM *ssl_start (TCPSTREAM *tstream,char *host,unsigned long flags)
       break;
     default:			/* non-certificate failure */
       if (flags & NET_TRYSSL);	/* no error output if tryssl */
-				/* pass to error callback */
+      else if (net_failed) {
+	if (!(flags & NET_SILENT)) {
+	  sprintf (tmp,"TLS/SSL failure for %.80s: %.512s",host,reason);
+	  mm_log (tmp,ERROR);
+	}
+      }
       else if (sf) (*sf) (host,reason,flags);
       else {			/* no error callback, build error message */
 	sprintf (tmp,"TLS/SSL failure for %.80s: %.512s",host,reason);
@@ -464,22 +484,117 @@ static char *ssl_start_work (SSLSTREAM *stream,char *host,unsigned long flags)
   SSL_set_bio (stream->con,bio,bio);
   SSL_set_connect_state (stream->con);
   if (SSL_in_init (stream->con)) SSL_total_renegotiations (stream->con);
-				/* now negotiate SSL */
-  if (SSL_write (stream->con,"",0) < 0)
-    return ssl_last_error ? ssl_last_error : "SSL negotiation failed";
+  /* bounded non-blocking SSL handshake */
+  {
+    time_t deadline;
+    int sock = stream->tcpstream->tcpsi;
+    int flgs;
+
+    if (sock < 0 || sock >= FD_SETSIZE) {
+      stream->io_failed = 1;
+      stream->net_failed = 1;
+      return "Invalid socket for SSL negotiation";
+    }
+
+    if (ssl_active_open_deadline > 0) {
+      deadline = ssl_active_open_deadline;
+      if (deadline <= time (0)) deadline = time (0) + 1;
+    }
+    else {
+      long ttmo_open = (long) mail_parameters (NIL,GET_OPENTIMEOUT,NIL);
+      long ttmo_read = (long) mail_parameters (NIL,GET_READTIMEOUT,NIL);
+      long hs_tmo = ttmo_open > 0 ? ttmo_open : (ttmo_read > 0 ? ttmo_read : 15);
+      deadline = time (0) + hs_tmo;
+    }
+
+    flgs = fcntl (sock,F_GETFL,0);
+    fcntl (sock,F_SETFL,flgs | O_NONBLOCK);
+    ssl_verify_paused = 0;
+    ERR_clear_error ();
+
+    for (;;) {
+      int rc = SSL_connect (stream->con);
+      if (ssl_verify_paused > 0) {
+	deadline += ssl_verify_paused;
+	ssl_verify_paused = 0;
+      }
+      if (rc == 1) {
+	fcntl (sock,F_SETFL,flgs);
+	stream->handshake_done = 1;
+	break;
+      }
+      int ssl_err = SSL_get_error (stream->con,rc);
+      if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
+	fd_set rfds,wfds,efds;
+	struct timeval tmo;
+	time_t now = time (0);
+	int sel;
+
+	if (now >= deadline) {
+	  fcntl (sock,F_SETFL,flgs);
+	  stream->io_failed = 1;
+	  stream->net_failed = 1;
+	  return "SSL negotiation timed out";
+	}
+
+	do {
+	  tmo.tv_usec = 0;
+	  tmo.tv_sec = (deadline > now) ? (deadline - now) : 0;
+	  FD_ZERO (&rfds);
+	  FD_ZERO (&wfds);
+	  FD_ZERO (&efds);
+	  if (ssl_err == SSL_ERROR_WANT_READ) FD_SET (sock,&rfds);
+	  else FD_SET (sock,&wfds);
+	  FD_SET (sock,&efds);
+	  sel = select (sock+1,&rfds,&wfds,&efds,&tmo);
+	  now = time (0);
+	  if ((sel < 0) && (errno == EINTR) && (deadline <= now)) sel = 0;
+	} while ((sel < 0) && (errno == EINTR));
+
+	if (sel == 0) {	/* timed out */
+	  fcntl (sock,F_SETFL,flgs);
+	  stream->io_failed = 1;
+	  stream->net_failed = 1;
+	  return "SSL negotiation timed out";
+	}
+	else if (sel < 0) {
+	  fcntl (sock,F_SETFL,flgs);
+	  stream->io_failed = 1;
+	  stream->net_failed = 1;
+	  sprintf (tmp,"SSL negotiation I/O error: %.128s",strerror (errno));
+	  return ssl_last_error = cpystr (tmp);
+	}
+	ERR_clear_error ();
+	continue;
+      }
+      else {
+	/* handshake failed */
+	fcntl (sock,F_SETFL,flgs);
+	stream->io_failed = 1;
+	if ((ssl_err == SSL_ERROR_SYSCALL && ERR_peek_error () == 0) ||
+	    ssl_err == SSL_ERROR_ZERO_RETURN)
+	  stream->net_failed = 1;
+	return ssl_last_error ? ssl_last_error : "SSL negotiation failed";
+      }
+    }
+  }
 				/* need to validate host names? */
   cert = SSL_get_peer_certificate (stream->con);
   if (!(flags & NET_NOVALIDATECERT) &&
       (err = ssl_validate_cert (cert, host))) {
 				/* application callback */
     X509_NAME_oneline (X509_get_subject_name(cert), buf, sizeof(buf));
-    if (scq) return (*scq) (err,host,cert ? buf : "???") ? NIL : "";
+    if (scq) {
+      int qres = (*scq) (err,host,cert ? buf : "???");
+      if (cert) X509_free (cert);
+      return qres ? NIL : "";
+    }
 				/* error message to return via mm_log() */
     sprintf (tmp,"*%.128s: %.255s",err,cert ? buf : "???");
     X509_free(cert);
     return ssl_last_error = cpystr (tmp);
   }
-  X509_free(cert);
+  if (cert) X509_free(cert);
   return NIL;
 }
 
@@ -504,9 +619,14 @@ static int ssl_open_verify (int ok,X509_STORE_CTX *ctx)
       ssl_last_error = cpystr (tmp);
     }
 				/* ignore error if application says to */
-    else if ((*scq) (err,ssl_last_host,cert)) ok = T;
-				/* application wants punt */
-    else ssl_last_error = cpystr ("");
+    else {
+      time_t t0 = time (0);
+      int qres = (*scq) (err,ssl_last_host,cert);
+      time_t dt = time (0) - t0;
+      if (dt > 0) ssl_verify_paused += dt;
+      if (qres) ok = T;
+      else ssl_last_error = cpystr ("");
+    }
   }
   return ok;
 }
@@ -739,7 +859,7 @@ long ssl_getbuffer (SSLSTREAM *stream,unsigned long size,char *buffer)
 
 long ssl_getdata (SSLSTREAM *stream)
 {
-  int i,sock;
+  int i,sock,flgs;
   fd_set fds,efds;
   struct timeval tmo;
   tcptimeout_t tmoh = (tcptimeout_t) mail_parameters (NIL,GET_TIMEOUT,NIL);
@@ -750,6 +870,8 @@ long ssl_getdata (SSLSTREAM *stream)
 				/* tcp_unix should have prevented this */
   if (sock >= FD_SETSIZE) fatal ("unselectable socket in ssl_getdata()");
   (*bn) (BLOCK_TCPREAD,NIL);
+  flgs = fcntl (sock,F_GETFL,0);
+  fcntl (sock,F_SETFL,flgs | O_NONBLOCK);
   while (stream->ictr < 1) {	/* if nothing in the buffer */
     time_t tl = time (0);	/* start of request */
     time_t now = tl;
@@ -772,10 +894,18 @@ long ssl_getdata (SSLSTREAM *stream)
     }
     if (i) {			/* non-timeout result from select? */
       errno = 0;		/* just in case */
-      if (i > 0)		/* read what we can */
-	while (((i = SSL_read (stream->con,stream->ibuf,SSLBUFLEN)) < 0) &&
-	       ((errno == EINTR) ||
-		(SSL_get_error (stream->con,i) == SSL_ERROR_WANT_READ)));
+      if (i > 0) {		/* read what we can */
+	do {
+	  ERR_clear_error ();
+	  i = SSL_read (stream->con,stream->ibuf,SSLBUFLEN);
+	} while (i < 0 && errno == EINTR);
+      }
+      if (i < 0) {
+	int ssl_err = SSL_get_error (stream->con,i);
+	if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
+	  continue;
+	}
+      }
       if (i <= 0) {		/* error seen? */
 	if (tcpdebug) {
 	  char *s,tmp[MAILTMPLEN];
@@ -784,6 +914,8 @@ long ssl_getdata (SSLSTREAM *stream)
 	  else s = "SSL data read end of file";
 	  mm_log (s,TCPDEBUG);
 	}
+	fcntl (sock,F_SETFL,flgs);
+	stream->io_failed = 1;
 	return ssl_abort (stream);
       }
       stream->iptr = stream->ibuf;/* point at TCP buffer */
@@ -793,9 +925,12 @@ long ssl_getdata (SSLSTREAM *stream)
 				/* timeout, punt unless told not to */
     else if (!tmoh || !(*tmoh) (now - t,now - tl, stream->tcpstream->host)) {
       if (tcpdebug) mm_log ("SSL data read timeout",TCPDEBUG);
+      fcntl (sock,F_SETFL,flgs);
+      stream->io_failed = 1;
       return ssl_abort (stream);
     }
   }
+  fcntl (sock,F_SETFL,flgs);
   (*bn) (BLOCK_NONE,NIL);
   return T;
 }
@@ -821,26 +956,88 @@ long ssl_soutr (SSLSTREAM *stream,char *string)
 
 long ssl_sout (SSLSTREAM *stream,char *string,unsigned long size)
 {
-  long i;
+  int sock, flgs;
   blocknotify_t bn = (blocknotify_t) mail_parameters (NIL,GET_BLOCKNOTIFY,NIL);
-  if (!stream->con) return NIL;
+  tcptimeout_t tmoh = (tcptimeout_t) mail_parameters (NIL,GET_TIMEOUT,NIL);
+  long ttmo_write = (long) mail_parameters (NIL,GET_WRITETIMEOUT,NIL);
+  long ttmo_read = (long) mail_parameters (NIL,GET_READTIMEOUT,NIL);
+  long wtmo = ttmo_write > 0 ? ttmo_write : (ttmo_read > 0 ? ttmo_read : 15);
+  time_t t = time (0);
+
+  if (!stream->con || ((sock = SSL_get_fd (stream->con)) < 0)) return NIL;
+  if (sock >= FD_SETSIZE) fatal ("unselectable socket in ssl_sout()");
+
   (*bn) (BLOCK_TCPWRITE,NIL);
   if (tcpdebug) mm_log ("Writing to SSL",TCPDEBUG);
-				/* until request satisfied */
-  for (i = 0; size > 0; string += i,size -= i)
-				/* write as much as we can */
-    if ((i = SSL_write (stream->con,string,(int) min (SSLBUFLEN,size))) < 0) {
+
+  flgs = fcntl (sock,F_GETFL,0);
+  fcntl (sock,F_SETFL,flgs | O_NONBLOCK);
+
+  while (size > 0) {
+    int ssl_err;
+    ERR_clear_error ();
+    int n = SSL_write (stream->con,string,(int) min (SSLBUFLEN,size));
+    if (n > 0) {
+      string += n;
+      size -= (unsigned long) n;
+      continue;
+    }
+    ssl_err = SSL_get_error (stream->con,n);
+    if ((n < 0 && errno == EINTR) ||
+	ssl_err == SSL_ERROR_WANT_WRITE || ssl_err == SSL_ERROR_WANT_READ) {
+      fd_set rfds,wfds,efds;
+      struct timeval tmo;
+      time_t tl = time (0);
+      time_t now = tl;
+      time_t ti = wtmo ? (now + wtmo) : 0;
+      int sel;
+      do {
+	tmo.tv_usec = 0;
+	tmo.tv_sec = ti ? (ti - now) : 0;
+	FD_ZERO (&rfds);
+	FD_ZERO (&wfds);
+	FD_ZERO (&efds);
+	if (ssl_err == SSL_ERROR_WANT_READ) FD_SET (sock,&rfds);
+	else FD_SET (sock,&wfds);
+	FD_SET (sock,&efds);
+	sel = select (sock+1,&rfds,&wfds,&efds,ti ? &tmo : 0);
+	now = time (0);
+	if ((sel < 0) && (errno == EINTR) && ti && (ti <= now)) sel = 0;
+      } while ((sel < 0) && (errno == EINTR));
+
+      if (sel == 0) {	/* timeout */
+	if (!tmoh || !(*tmoh) (now - t,now - tl,stream->tcpstream->host)) {
+	  if (tcpdebug) mm_log ("SSL data write timeout",TCPDEBUG);
+	  fcntl (sock,F_SETFL,flgs);
+	  stream->io_failed = 1;
+	  return ssl_abort (stream);
+	}
+	continue;
+      }
+      else if (sel < 0) {
+	if (tcpdebug) mm_log ("SSL data write select error",TCPDEBUG);
+	fcntl (sock,F_SETFL,flgs);
+	stream->io_failed = 1;
+	return ssl_abort (stream);
+      }
+      continue;
+    }
+    else {		/* SSL_write error */
       if (tcpdebug) {
 	char tmp[MAILTMPLEN];
-	sprintf (tmp,"SSL data write I/O error %d SSL error %d",
-		 errno,SSL_get_error (stream->con,i));
+	sprintf (tmp,"SSL data write I/O error %d SSL error %d",errno,ssl_err);
 	mm_log (tmp,TCPDEBUG);
       }
-      return ssl_abort (stream);/* write failed */
+      fcntl (sock,F_SETFL,flgs);
+      stream->io_failed = 1;
+      return ssl_abort (stream);
     }
+  }
+
+  fcntl (sock,F_SETFL,flgs);
   if (tcpdebug) mm_log ("successfully wrote to TCP",TCPDEBUG);
   (*bn) (BLOCK_NONE,NIL);
-  return LONGT;			/* all done */
+  return LONGT;
 }
 
 /* SSL close
@@ -863,7 +1060,16 @@ static long ssl_abort (SSLSTREAM *stream)
 {
   blocknotify_t bn = (blocknotify_t) mail_parameters (NIL,GET_BLOCKNOTIFY,NIL);
   if (stream->con) {		/* close SSL connection */
-    SSL_shutdown (stream->con);
+    if (stream->handshake_done && !stream->io_failed &&
+	stream->tcpstream && stream->tcpstream->tcpsi >= 0) {
+      int s = stream->tcpstream->tcpsi;
+      int fl = fcntl (s,F_GETFL,0);
+      if (fl >= 0) fcntl (s,F_SETFL,fl | O_NONBLOCK);
+      SSL_shutdown (stream->con);
+    }
+    else {
+      SSL_set_shutdown (stream->con,SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);
+    }
     SSL_free (stream->con);
     stream->con = NIL;
   }
